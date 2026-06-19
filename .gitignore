@@ -1,0 +1,9 @@
+.cache/upstream/
+plugins/superpowers/assets/
+plugins/superpowers/hooks/
+plugins/superpowers/skills/
+plugins/superpowers/.codex-plugin/plugin.json
+plugins/superpowers/LICENSE
+plugins/superpowers/README.md
+plugins/superpowers/CODE_OF_CONDUCT.md
+plugins/superpowers/.superpowers-upstream.json

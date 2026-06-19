@@ -1,0 +1,23 @@
+{
+  "name": "superpowers",
+  "version": "0.0.0+wrapper.template",
+  "description": "Local wrapper for upstream Superpowers skills.",
+  "author": {
+    "name": "superpowers-wrapper"
+  },
+  "repository": "https://github.com/obra/superpowers",
+  "license": "MIT",
+  "keywords": ["superpowers", "skills", "codex"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Superpowers",
+    "shortDescription": "Upstream Superpowers skills from a local wrapper.",
+    "longDescription": "A local Codex wrapper that prepares upstream Superpowers runtime files from the configured Git ref.",
+    "developerName": "superpowers-wrapper",
+    "category": "Developer Tools",
+    "capabilities": ["skills"],
+    "defaultPrompt": [
+      "Use Superpowers skills when they match the task."
+    ]
+  }
+}
