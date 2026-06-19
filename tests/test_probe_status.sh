@@ -13,6 +13,13 @@ test "$(spw_status_for_commits "$desired" "$desired" "aaaaaaaaaaaaaaaaaaaaaaaaaa
 test "$(spw_status_for_commits "$desired" "$desired" "$desired")" = "current"
 test "$(spw_status_for_commits "$desired" "$desired" "896224c")" = "current"
 
+# spw_commit_matches: full-sha match, 7-char short-sha match, mismatch, and
+# the load-bearing empty-observed invariant (empty must NOT match).
+spw_commit_matches "$desired" "$desired"
+spw_commit_matches "$desired" "896224c"
+! spw_commit_matches "$desired" "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+! spw_commit_matches "$desired" ""
+
 tmpdir=$(mktemp -d)
 trap 'rm -rf "$tmpdir"' EXIT INT TERM
 mkdir -p "$tmpdir/plugin/.codex-plugin"
@@ -24,3 +31,13 @@ cat > "$tmpdir/plugin/.codex-plugin/plugin.json" <<'JSON'
 JSON
 short=$(spw_manifest_short_sha_or_empty "$tmpdir/plugin/.codex-plugin/plugin.json")
 test "$short" = "896224c"
+
+# The template's placeholder version is not a real fingerprint -> empty.
+cat > "$tmpdir/plugin/.codex-plugin/plugin.json" <<'JSON'
+{
+  "name": "superpowers",
+  "version": "0.0.0+wrapper.template"
+}
+JSON
+template_short=$(spw_manifest_short_sha_or_empty "$tmpdir/plugin/.codex-plugin/plugin.json")
+test -z "$template_short"
