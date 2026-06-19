@@ -1,0 +1,31 @@
+#!/bin/sh
+set -eu
+
+root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
+. "$root/scripts/lib.sh"
+
+codex_bin="${SUPERPOWERS_CODEX:-codex}"
+refresh_mode="${SUPERPOWERS_INSTALL_REFRESH_MODE:-add-only}"
+
+spw_require_command "$codex_bin"
+
+echo "Note: remove or disable conflicting Superpowers providers yourself before relying on wrapper skills."
+
+if ! "$codex_bin" plugin marketplace add "$root"; then
+  spw_die "codex marketplace add failed for $root"
+fi
+
+case "$refresh_mode" in
+  add-only)
+    ;;
+  remove-add)
+    "$codex_bin" plugin remove "$SPW_PLUGIN_ID" || true
+    ;;
+  *)
+    spw_die "unsupported SUPERPOWERS_INSTALL_REFRESH_MODE: $refresh_mode"
+    ;;
+esac
+
+if ! "$codex_bin" plugin add "$SPW_PLUGIN_ID"; then
+  spw_die "codex plugin add failed for $SPW_PLUGIN_ID"
+fi
