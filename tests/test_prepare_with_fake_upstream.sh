@@ -66,10 +66,11 @@ import json, sys
 print(json.load(open(sys.argv[1], encoding="utf-8"))["version"])
 PY
 )
-case "$version" in
-  0.0.0+wrapper.*) ;;
-  *) echo "unexpected wrapper version: $version" >&2; exit 1 ;;
-esac
+expected_short=$(printf '%s' "$commit" | cut -c 1-7)
+if [ "$version" != "0.0.0+wrapper.$expected_short" ]; then
+  echo "unexpected wrapper version: $version (expected 0.0.0+wrapper.$expected_short)" >&2
+  exit 1
+fi
 
 if grep -Fq '"hooks"' "$manifest"; then
   echo "manifest must not contain unsupported hooks field" >&2
