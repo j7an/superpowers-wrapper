@@ -1,0 +1,86 @@
+#!/bin/sh
+set -eu
+
+root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
+. "$root/scripts/lib.sh"
+
+upstream_url="${SUPERPOWERS_UPSTREAM_URL:-$SPW_UPSTREAM_URL_DEFAULT}"
+cache_parent="${SUPERPOWERS_CACHE_DIR:-$root/.cache/upstream}"
+cache="$cache_parent/superpowers"
+plugin_root="${SUPERPOWERS_PLUGIN_ROOT:-$root/plugins/superpowers}"
+manifest_template="${SUPERPOWERS_MANIFEST_TEMPLATE:-$root/plugins/superpowers/.codex-plugin/plugin.template.json}"
+validator="${SUPERPOWERS_VALIDATOR:-/Users/j7an/.codex/skills/.system/plugin-creator/scripts/validate_plugin.py}"
+tmp_parent=$(dirname "$plugin_root")
+tmp_plugin="$tmp_parent/.superpowers.tmp.$$"
+requested_ref=$(spw_config_ref "$root")
+
+spw_require_command git
+spw_require_command python3
+[ -f "$manifest_template" ] || spw_die "missing wrapper manifest template: $manifest_template"
+
+resolved_pair=$(spw_resolve_ref "$upstream_url" "$requested_ref")
+resolved_ref=$(printf '%s\n' "$resolved_pair" | awk '{ print $1 }')
+commit=$(printf '%s\n' "$resolved_pair" | awk '{ print $2 }')
+
+mkdir -p "$cache_parent" "$tmp_parent"
+if [ -d "$cache/.git" ]; then
+  if ! git -C "$cache" fetch --tags --prune "$upstream_url"; then
+    spw_die "cannot fetch upstream repo: $upstream_url"
+  fi
+else
+  if ! git clone "$upstream_url" "$cache"; then
+    spw_die "cannot clone upstream repo: $upstream_url"
+  fi
+fi
+if ! git -C "$cache" checkout --detach "$commit" >/dev/null; then
+  spw_die "cannot check out upstream commit: $commit"
+fi
+
+spw_require_upstream_path "$cache/skills" "skills/"
+spw_require_upstream_path "$cache/LICENSE" "LICENSE"
+spw_require_upstream_path "$cache/README.md" "README.md"
+spw_require_upstream_path "$cache/CODE_OF_CONDUCT.md" "CODE_OF_CONDUCT.md"
+
+rm -rf "$tmp_plugin"
+mkdir -p "$tmp_plugin/.codex-plugin"
+cp "$manifest_template" "$tmp_plugin/.codex-plugin/plugin.json"
+
+spw_copy_path_if_present "$cache/skills" "$tmp_plugin/skills"
+spw_copy_path_if_present "$cache/assets" "$tmp_plugin/assets"
+spw_copy_path_if_present "$cache/hooks" "$tmp_plugin/hooks"
+spw_copy_path_if_present "$cache/LICENSE" "$tmp_plugin/LICENSE"
+spw_copy_path_if_present "$cache/README.md" "$tmp_plugin/README.md"
+spw_copy_path_if_present "$cache/CODE_OF_CONDUCT.md" "$tmp_plugin/CODE_OF_CONDUCT.md"
+
+upstream_manifest_version=""
+if [ -f "$cache/.codex-plugin/plugin.json" ]; then
+  upstream_manifest_version=$(spw_json_get "$cache/.codex-plugin/plugin.json" "version")
+fi
+
+spw_write_metadata_json \
+  "$tmp_plugin/.superpowers-upstream.json" \
+  "$upstream_url" \
+  "$requested_ref" \
+  "$resolved_ref" \
+  "$commit" \
+  "$upstream_manifest_version"
+
+spw_update_manifest_version \
+  "$tmp_plugin/.codex-plugin/plugin.json" \
+  "$(spw_manifest_version_for_commit "$commit")"
+
+if [ -f "$validator" ]; then
+  if ! python3 "$validator" "$tmp_plugin"; then
+    spw_die "plugin validation failed for generated Superpowers plugin"
+  fi
+else
+  spw_die "plugin validator not found: $validator"
+fi
+
+mkdir -p "$plugin_root"
+rm -rf "$plugin_root/assets" "$plugin_root/hooks" "$plugin_root/skills"
+rm -f "$plugin_root/.codex-plugin/plugin.json" "$plugin_root/LICENSE" "$plugin_root/README.md" "$plugin_root/CODE_OF_CONDUCT.md" "$plugin_root/.superpowers-upstream.json"
+cp -R "$tmp_plugin"/. "$plugin_root"/
+rm -rf "$tmp_plugin"
+
+echo "prepared $resolved_ref at $commit"

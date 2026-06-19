@@ -128,6 +128,62 @@ print(value if value is not None else "")
 PY
 }
 
+spw_copy_path_if_present() {
+  src="$1"
+  dst="$2"
+  if [ -e "$src" ]; then
+    rm -rf "$dst"
+    cp -R "$src" "$dst"
+  fi
+}
+
+spw_require_upstream_path() {
+  path="$1"
+  label="$2"
+  if [ ! -e "$path" ]; then
+    spw_die "required upstream path missing: $label"
+  fi
+}
+
+spw_write_metadata_json() {
+  file="$1"
+  source="$2"
+  requested_ref="$3"
+  resolved_ref="$4"
+  commit="$5"
+  upstream_manifest_version="$6"
+  python3 - "$file" "$source" "$requested_ref" "$resolved_ref" "$commit" "$upstream_manifest_version" <<'PY'
+import json, sys
+path, source, requested, resolved, commit, version = sys.argv[1:]
+data = {
+    "source": source,
+    "requested_ref": requested,
+    "resolved_ref": resolved,
+    "commit": commit,
+    "upstream_manifest_version": version,
+}
+with open(path, "w", encoding="utf-8") as f:
+    json.dump(data, f, indent=2)
+    f.write("\n")
+PY
+}
+
+spw_update_manifest_version() {
+  manifest="$1"
+  version="$2"
+  python3 - "$manifest" "$version" <<'PY'
+import json, sys
+path, version = sys.argv[1:]
+with open(path, "r", encoding="utf-8") as f:
+    data = json.load(f)
+data["version"] = version
+data.pop("hooks", None)
+with open(path, "w", encoding="utf-8") as f:
+    json.dump(data, f, indent=2)
+    f.write("\n")
+PY
+}
+
 spw_status_for_commits() {
   desired="$1"
   generated="$2"
