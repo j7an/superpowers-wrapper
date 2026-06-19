@@ -1,0 +1,42 @@
+#!/bin/sh
+set -eu
+
+root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
+. "$root/scripts/lib.sh"
+
+upstream_url="${SUPERPOWERS_UPSTREAM_URL:-$SPW_UPSTREAM_URL_DEFAULT}"
+requested_ref=$(spw_config_ref "$root")
+resolved_pair=$(spw_resolve_ref "$upstream_url" "$requested_ref")
+resolved_ref=$(printf '%s\n' "$resolved_pair" | awk '{ print $1 }')
+desired_commit=$(printf '%s\n' "$resolved_pair" | awk '{ print $2 }')
+
+generated_metadata="$root/plugins/superpowers/.superpowers-upstream.json"
+generated_commit=$(spw_metadata_commit_or_empty "$generated_metadata" || true)
+
+installed_metadata=$(spw_find_installed_metadata || true)
+installed_manifest=$(spw_find_installed_manifest || true)
+installed_commit=""
+if [ -n "$installed_metadata" ]; then
+  installed_commit=$(spw_metadata_commit_or_empty "$installed_metadata" || true)
+fi
+if [ -z "$installed_commit" ] && [ -n "$installed_manifest" ]; then
+  installed_commit=$(spw_manifest_short_sha_or_empty "$installed_manifest" || true)
+fi
+
+status=$(spw_status_for_commits "$desired_commit" "$generated_commit" "$installed_commit")
+
+if [ "${1:-}" = "--porcelain" ]; then
+  printf 'requested_ref=%s\n' "$requested_ref"
+  printf 'resolved_ref=%s\n' "$resolved_ref"
+  printf 'desired_commit=%s\n' "$desired_commit"
+  printf 'generated_commit=%s\n' "$generated_commit"
+  printf 'installed_commit=%s\n' "$installed_commit"
+  printf 'status=%s\n' "$status"
+else
+  printf 'requested ref: %s\n' "$requested_ref"
+  printf 'resolved ref: %s\n' "$resolved_ref"
+  printf 'desired commit: %s\n' "$desired_commit"
+  printf 'generated plugin commit: %s\n' "${generated_commit:-not present}"
+  printf 'installed wrapper commit or fingerprint: %s\n' "${installed_commit:-not detected}"
+  printf 'status: %s\n' "$status"
+fi

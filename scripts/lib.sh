@@ -201,3 +201,33 @@ spw_status_for_commits() {
     printf '%s\n' "current"
   fi
 }
+
+spw_metadata_commit_or_empty() {
+  file="$1"
+  if [ -f "$file" ]; then
+    spw_json_get "$file" "commit"
+  fi
+}
+
+spw_manifest_short_sha_or_empty() {
+  file="$1"
+  if [ ! -f "$file" ]; then
+    return 0
+  fi
+  version=$(spw_json_get "$file" "version")
+  case "$version" in
+    0.0.0+wrapper.[0-9a-fA-F]*)
+      printf '%s\n' "${version##*.}"
+      ;;
+  esac
+}
+
+spw_find_installed_metadata() {
+  search_root="${SUPERPOWERS_INSTALLED_SEARCH_ROOT:-$HOME/.codex}"
+  find "$search_root" -path "*/superpowers/.superpowers-upstream.json" -type f 2>/dev/null | head -n 1
+}
+
+spw_find_installed_manifest() {
+  search_root="${SUPERPOWERS_INSTALLED_SEARCH_ROOT:-$HOME/.codex}"
+  find "$search_root" -path "*/superpowers/.codex-plugin/plugin.json" -type f 2>/dev/null | head -n 1
+}
