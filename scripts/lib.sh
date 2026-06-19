@@ -1,0 +1,147 @@
+#!/bin/sh
+
+SPW_UPSTREAM_URL_DEFAULT="https://github.com/obra/superpowers"
+SPW_PLUGIN_ID="superpowers@superpowers-wrapper"
+SPW_MARKETPLACE_NAME="superpowers-wrapper"
+
+spw_die() {
+  echo "error: $*" >&2
+  exit 1
+}
+
+spw_require_command() {
+  command_name="$1"
+  if ! command -v "$command_name" >/dev/null 2>&1; then
+    spw_die "required command not found: $command_name"
+  fi
+}
+
+spw_root() {
+  CDPATH= cd -- "$(dirname "$0")/.." && pwd
+}
+
+spw_config_ref() {
+  root="$1"
+  if [ -n "${SUPERPOWERS_REF:-}" ]; then
+    printf '%s\n' "$SUPERPOWERS_REF"
+    return
+  fi
+  sed -n '1{s/[[:space:]]*$//;p;}' "$root/config/upstream-ref"
+}
+
+spw_manifest_version_for_commit() {
+  commit="$1"
+  short=$(printf '%s' "$commit" | cut -c 1-7)
+  printf '0.0.0+wrapper.%s\n' "$short"
+}
+
+spw_commit_matches() {
+  desired="$1"
+  observed="$2"
+  short=$(printf '%s' "$desired" | cut -c 1-7)
+  [ -n "$observed" ] && { [ "$observed" = "$desired" ] || [ "$observed" = "$short" ]; }
+}
+
+spw_select_latest_release_from_ls_remote() {
+  awk '
+    $2 ~ /^refs\/tags\/v[0-9]+\.[0-9]+\.[0-9]+(\^\{\})?$/ {
+      ref = $2
+      peeled = 0
+      if (ref ~ /\^\{\}$/) {
+        peeled = 1
+        sub(/\^\{\}$/, "", ref)
+      }
+      tag = ref
+      sub(/^refs\/tags\//, "", tag)
+      split(substr(tag, 2), parts, ".")
+      key = sprintf("%010d.%010d.%010d", parts[1], parts[2], parts[3])
+      tag_by_key[key] = tag
+      if (peeled || !(tag in sha_by_tag)) {
+        sha_by_tag[tag] = $1
+      }
+    }
+    END {
+      for (key in tag_by_key) {
+        tag = tag_by_key[key]
+        print key, tag, sha_by_tag[tag]
+      }
+    }
+  ' | sort | tail -n 1 | awk '
+    NF == 3 { print $2 " " $3; found = 1 }
+    END { if (!found) exit 1 }
+  '
+}
+
+spw_resolve_ref() {
+  upstream_url="$1"
+  requested_ref="$2"
+  spw_require_command git
+
+  if [ "$requested_ref" = "latest-release" ]; then
+    if ! output=$(git ls-remote --tags "$upstream_url" 'refs/tags/v*' 2>&1); then
+      spw_die "cannot query upstream tags from $upstream_url: $output"
+    fi
+    if ! selected=$(printf '%s\n' "$output" | spw_select_latest_release_from_ls_remote); then
+      spw_die "no stable semver tag found for latest-release"
+    fi
+    printf '%s\n' "$selected"
+    return
+  fi
+
+  if printf '%s' "$requested_ref" | grep -Eq '^[0-9a-fA-F]{40}$'; then
+    printf '%s %s\n' "$requested_ref" "$requested_ref"
+    return
+  fi
+
+  if ! tag_output=$(git ls-remote --tags "$upstream_url" "refs/tags/$requested_ref^{}" 2>&1); then
+    spw_die "cannot query upstream tag $requested_ref from $upstream_url: $tag_output"
+  fi
+  resolved=$(printf '%s\n' "$tag_output" | awk 'NF >= 2 { print $1; exit }')
+  if [ -n "$resolved" ]; then
+    printf '%s %s\n' "$requested_ref" "$resolved"
+    return
+  fi
+
+  if ! ref_output=$(git ls-remote "$upstream_url" "$requested_ref" 2>&1); then
+    spw_die "cannot query upstream ref $requested_ref from $upstream_url: $ref_output"
+  fi
+  resolved=$(printf '%s\n' "$ref_output" | awk 'NF >= 2 { print $1; exit }')
+  if [ -n "$resolved" ]; then
+    printf '%s %s\n' "$requested_ref" "$resolved"
+    return
+  fi
+
+  spw_die "cannot resolve upstream ref: $requested_ref"
+}
+
+spw_json_get() {
+  file="$1"
+  key="$2"
+  python3 - "$file" "$key" <<'PY'
+import json, sys
+with open(sys.argv[1], "r", encoding="utf-8") as f:
+    data = json.load(f)
+value = data
+for part in sys.argv[2].split("."):
+    value = value.get(part, "")
+print(value if value is not None else "")
+PY
+}
+
+spw_status_for_commits() {
+  desired="$1"
+  generated="$2"
+  installed="$3"
+
+  if [ -z "$generated" ]; then
+    printf '%s\n' "needs prepare"
+  elif ! spw_commit_matches "$desired" "$generated"; then
+    printf '%s\n' "needs prepare"
+  elif [ -z "$installed" ]; then
+    printf '%s\n' "needs install"
+  elif ! spw_commit_matches "$desired" "$installed"; then
+    printf '%s\n' "needs install"
+  else
+    printf '%s\n' "current"
+  fi
+}
