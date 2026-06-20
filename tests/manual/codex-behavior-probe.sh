@@ -1,0 +1,175 @@
+#!/bin/sh
+set -eu
+
+marketplace_name="superpowers-wrapper-probe"
+plugin_name="wrapper-probe"
+plugin_id="${plugin_name}@${marketplace_name}"
+probe_root="${TMPDIR:-/tmp}/superpowers-wrapper-codex-probe"
+sentinel="${TMPDIR:-/tmp}/superpowers-wrapper-hook-probe-ran"
+
+codex_bin="${CODEX_BIN:-codex}"
+
+cleanup() {
+  "$codex_bin" plugin remove "$plugin_id" >/dev/null 2>&1 || true
+  "$codex_bin" plugin marketplace remove "$marketplace_name" >/dev/null 2>&1 || true
+}
+
+write_probe_plugin() {
+  commit="$1"
+  version="$2"
+  rm -rf "$probe_root"
+  mkdir -p "$probe_root/.agents/plugins"
+  mkdir -p "$probe_root/plugins/$plugin_name/.codex-plugin"
+  mkdir -p "$probe_root/plugins/$plugin_name/skills/probe"
+  mkdir -p "$probe_root/plugins/$plugin_name/hooks"
+
+  cat > "$probe_root/.agents/plugins/marketplace.json" <<JSON
+{
+  "name": "$marketplace_name",
+  "interface": {
+    "displayName": "Superpowers Wrapper Probe"
+  },
+  "plugins": [
+    {
+      "name": "$plugin_name",
+      "source": {
+        "source": "local",
+        "path": "./plugins/$plugin_name"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL",
+        "products": ["CODEX"]
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}
+JSON
+
+  cat > "$probe_root/plugins/$plugin_name/.codex-plugin/plugin.json" <<JSON
+{
+  "name": "$plugin_name",
+  "version": "$version",
+  "description": "Throwaway Codex local marketplace behavior probe.",
+  "author": {
+    "name": "superpowers-wrapper"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Wrapper Probe",
+    "shortDescription": "Local marketplace behavior probe.",
+    "longDescription": "A temporary plugin used to observe Codex local marketplace refresh, cache, and hook behavior.",
+    "developerName": "superpowers-wrapper",
+    "category": "Developer Tools",
+    "capabilities": ["skills"],
+    "defaultPrompt": [
+      "Use wrapper-probe only for local marketplace testing."
+    ]
+  }
+}
+JSON
+
+  cat > "$probe_root/plugins/$plugin_name/skills/probe/SKILL.md" <<EOF
+---
+name: probe
+description: Temporary local marketplace probe skill
+---
+
+# Probe Skill
+
+This temporary skill records Codex local marketplace behavior.
+EOF
+
+  cat > "$probe_root/plugins/$plugin_name/.wrapper-probe-upstream.json" <<JSON
+{
+  "commit": "$commit"
+}
+JSON
+
+  cat > "$probe_root/plugins/$plugin_name/hooks/session-start-codex" <<EOF
+#!/bin/sh
+printf '%s\n' "$commit" >> "$sentinel"
+EOF
+  chmod +x "$probe_root/plugins/$plugin_name/hooks/session-start-codex"
+}
+
+find_installed_metadata() {
+  find "$HOME/.codex" -path "*/$plugin_name/.wrapper-probe-upstream.json" -type f 2>/dev/null | head -n 1
+}
+
+metadata_commit() {
+  file="$1"
+  python3 - "$file" <<'PY'
+import json, sys
+with open(sys.argv[1], "r", encoding="utf-8") as f:
+    print(json.load(f).get("commit", ""))
+PY
+}
+
+cleanup
+trap cleanup EXIT INT TERM
+rm -f "$sentinel"
+
+echo "Q1/Q2/Q3 probe root: $probe_root"
+write_probe_plugin "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" "0.0.0+probe.a"
+
+echo "Register marketplace and install commit A"
+"$codex_bin" plugin marketplace add "$probe_root"
+"$codex_bin" plugin add "$plugin_id"
+
+installed_metadata="$(find_installed_metadata || true)"
+if [ -n "$installed_metadata" ]; then
+  echo "Installed metadata path: $installed_metadata"
+  echo "Installed commit after first add: $(metadata_commit "$installed_metadata")"
+else
+  echo "Installed metadata path: not found"
+fi
+
+echo "Mutate source to commit B"
+write_probe_plugin "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" "0.0.0+probe.b"
+
+echo "Run plugin add without marketplace re-add"
+"$codex_bin" plugin add "$plugin_id" || true
+installed_metadata="$(find_installed_metadata || true)"
+if [ -n "$installed_metadata" ]; then
+  echo "Installed commit after add-only refresh: $(metadata_commit "$installed_metadata")"
+else
+  echo "Installed metadata path after add-only refresh: not found"
+fi
+
+echo "Run marketplace add, then plugin add"
+"$codex_bin" plugin marketplace add "$probe_root" || true
+"$codex_bin" plugin add "$plugin_id" || true
+installed_metadata="$(find_installed_metadata || true)"
+if [ -n "$installed_metadata" ]; then
+  echo "Installed commit after marketplace re-add and plugin add: $(metadata_commit "$installed_metadata")"
+fi
+
+echo "Run wrapper-plugin remove, then plugin add"
+"$codex_bin" plugin remove "$plugin_id" || true
+"$codex_bin" plugin add "$plugin_id"
+installed_metadata="$(find_installed_metadata || true)"
+if [ -n "$installed_metadata" ]; then
+  echo "Installed commit after remove/add: $(metadata_commit "$installed_metadata")"
+fi
+
+echo "Hook sentinel before new-session probe:"
+if [ -f "$sentinel" ]; then
+  cat "$sentinel"
+else
+  echo "not written"
+fi
+
+if "$codex_bin" exec --help >/dev/null 2>&1; then
+  echo "Run a noninteractive session to check hook activation"
+  "$codex_bin" exec "Respond with wrapper probe check." >/dev/null 2>&1 || true
+  echo "Hook sentinel after codex exec:"
+  if [ -f "$sentinel" ]; then
+    cat "$sentinel"
+  else
+    echo "not written"
+  fi
+else
+  echo "codex exec unavailable; check hook activation from a fresh interactive Codex session."
+fi
