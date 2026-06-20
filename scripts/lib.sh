@@ -231,3 +231,28 @@ spw_find_installed_manifest() {
   search_root="${SUPERPOWERS_INSTALLED_SEARCH_ROOT:-$HOME/.codex}"
   find "$search_root" -path "*/superpowers/.codex-plugin/plugin.json" -type f 2>/dev/null | head -n 1
 }
+
+# Decide, after an install, whether the wrapper refreshed. Given the re-probe
+# status and the detected installed commit, return one of:
+#   ok           - installed wrapper matches desired
+#   stale        - installed wrapper is detectable but does NOT match desired
+#                  (the install did not refresh the local plugin cache)
+#   unverifiable - installed wrapper cannot be detected, so refresh cannot be
+#                  confirmed either way
+#   error        - an unexpected post-install status
+# This lets `update` stay honest regardless of whether add-only or remove/add
+# is the correct Codex refresh path: it never claims success while the
+# installed wrapper is detectably stale.
+spw_post_install_status() {
+  status="$1"
+  installed="$2"
+  if [ "$status" = "current" ]; then
+    printf '%s\n' "ok"
+  elif [ "$status" = "needs install" ] && [ -n "$installed" ]; then
+    printf '%s\n' "stale"
+  elif [ "$status" = "needs install" ]; then
+    printf '%s\n' "unverifiable"
+  else
+    printf '%s\n' "error"
+  fi
+}

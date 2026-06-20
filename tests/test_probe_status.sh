@@ -20,6 +20,18 @@ spw_commit_matches "$desired" "896224c"
 ! spw_commit_matches "$desired" "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
 ! spw_commit_matches "$desired" ""
 
+# spw_post_install_status: update's post-install verification decision.
+# current -> ok (regardless of installed value).
+test "$(spw_post_install_status "current" "")" = "ok"
+test "$(spw_post_install_status "current" "896224c")" = "ok"
+# detectable but mismatched installed -> stale (install did not refresh).
+test "$(spw_post_install_status "needs install" "deadbeef")" = "stale"
+# undetectable installed -> cannot confirm either way.
+test "$(spw_post_install_status "needs install" "")" = "unverifiable"
+# unexpected post-install states -> error.
+test "$(spw_post_install_status "needs prepare" "")" = "error"
+test "$(spw_post_install_status "unknown" "")" = "error"
+
 tmpdir=$(mktemp -d)
 trap 'rm -rf "$tmpdir"' EXIT INT TERM
 mkdir -p "$tmpdir/plugin/.codex-plugin"
