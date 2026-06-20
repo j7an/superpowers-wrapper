@@ -6,9 +6,9 @@ root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 
 upstream_url="${SUPERPOWERS_UPSTREAM_URL:-$SPW_UPSTREAM_URL_DEFAULT}"
 requested_ref=$(spw_config_ref "$root")
-resolved_pair=$(spw_resolve_ref "$upstream_url" "$requested_ref")
-resolved_ref=$(printf '%s\n' "$resolved_pair" | awk '{ print $1 }')
-desired_commit=$(printf '%s\n' "$resolved_pair" | awk '{ print $2 }')
+resolved_record=$(spw_resolve_ref "$upstream_url" "$requested_ref")
+resolved_ref=$(printf '%s\n' "$resolved_record" | awk '{ print $2 }')
+desired_commit=$(printf '%s\n' "$resolved_record" | awk '{ print $3 }')
 
 generated_metadata="$root/plugins/superpowers/.superpowers-upstream.json"
 generated_commit=$(spw_metadata_commit_or_empty "$generated_metadata" || true)

@@ -35,21 +35,28 @@ test "$(spw_post_install_status "unknown" "")" = "error"
 tmpdir=$(mktemp -d)
 trap 'rm -rf "$tmpdir"' EXIT INT TERM
 mkdir -p "$tmpdir/plugin/.codex-plugin"
-cat > "$tmpdir/plugin/.codex-plugin/plugin.json" <<'JSON'
+assert_manifest_short() {
+  version="$1"
+  expected="$2"
+  cat > "$tmpdir/plugin/.codex-plugin/plugin.json" <<JSON
 {
   "name": "superpowers",
-  "version": "0.0.0+wrapper.896224c"
+  "version": "$version"
 }
 JSON
-short=$(spw_manifest_short_sha_or_empty "$tmpdir/plugin/.codex-plugin/plugin.json")
-test "$short" = "896224c"
+  actual=$(spw_manifest_short_sha_or_empty "$tmpdir/plugin/.codex-plugin/plugin.json")
+  if [ "$actual" != "$expected" ]; then
+    echo "unexpected manifest short sha for $version: $actual (expected $expected)" >&2
+    exit 1
+  fi
+}
 
+assert_manifest_short "6.0.3+wrapper.896224c" "896224c"
+assert_manifest_short "6.1.0-beta.1+wrapper.abc1234" "abc1234"
+assert_manifest_short "0.0.0-main+wrapper.def5678" "def5678"
+assert_manifest_short "0.0.0-ref-feature-foo+wrapper.fedcba9" "fedcba9"
+assert_manifest_short "0.0.0-ref-042+wrapper.0123abc" "0123abc"
+assert_manifest_short "0.0.0+wrapper.896224c" "896224c"
 # The template's placeholder version is not a real fingerprint -> empty.
-cat > "$tmpdir/plugin/.codex-plugin/plugin.json" <<'JSON'
-{
-  "name": "superpowers",
-  "version": "0.0.0+wrapper.template"
-}
-JSON
-template_short=$(spw_manifest_short_sha_or_empty "$tmpdir/plugin/.codex-plugin/plugin.json")
-test -z "$template_short"
+assert_manifest_short "0.0.0+wrapper.template" ""
+assert_manifest_short "6.0.3+wrapper.abcxyz1" ""

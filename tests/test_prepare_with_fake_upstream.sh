@@ -34,13 +34,113 @@ JSON
 git -C "$upstream" add .
 git -C "$upstream" -c user.email=superpowers-wrapper@example.invalid -c user.name=superpowers-wrapper -c commit.gpgsign=false commit -m "fake upstream" >/dev/null
 git -C "$upstream" -c user.email=superpowers-wrapper@example.invalid -c user.name=superpowers-wrapper -c tag.gpgsign=false tag -a v6.0.3 -m "fake release"
-commit=$(git -C "$upstream" rev-list -n1 v6.0.3)
 
-SUPERPOWERS_UPSTREAM_URL="$upstream" \
-SUPERPOWERS_CACHE_DIR="$tmpdir/cache" \
-SUPERPOWERS_PLUGIN_ROOT="$output" \
-sh "$root/scripts/prepare"
+release_commit=$(git -C "$upstream" rev-list -n1 v6.0.3)
+git -C "$upstream" branch -M main
 
+printf 'branch data\n' > "$upstream/skills/brainstorming/branch.txt"
+git -C "$upstream" add skills/brainstorming/branch.txt
+git -C "$upstream" -c user.email=superpowers-wrapper@example.invalid -c user.name=superpowers-wrapper -c commit.gpgsign=false commit -m "main branch update" >/dev/null
+main_commit=$(git -C "$upstream" rev-parse HEAD)
+git -C "$upstream" -c user.email=superpowers-wrapper@example.invalid -c user.name=superpowers-wrapper -c tag.gpgsign=false tag -a v6.1.0-beta.1 -m "fake prerelease"
+
+git -C "$upstream" checkout -b feature/foo >/dev/null
+printf 'feature data\n' > "$upstream/skills/brainstorming/feature.txt"
+git -C "$upstream" add skills/brainstorming/feature.txt
+git -C "$upstream" -c user.email=superpowers-wrapper@example.invalid -c user.name=superpowers-wrapper -c commit.gpgsign=false commit -m "feature branch update" >/dev/null
+feature_commit=$(git -C "$upstream" rev-parse HEAD)
+
+git -C "$upstream" checkout -b 042 >/dev/null
+printf 'leading zero ref\n' > "$upstream/skills/brainstorming/leading-zero.txt"
+git -C "$upstream" add skills/brainstorming/leading-zero.txt
+git -C "$upstream" -c user.email=superpowers-wrapper@example.invalid -c user.name=superpowers-wrapper -c commit.gpgsign=false commit -m "leading zero branch" >/dev/null
+leading_zero_commit=$(git -C "$upstream" rev-parse HEAD)
+git -C "$upstream" checkout main >/dev/null
+
+read_json_key() {
+  file="$1"
+  key="$2"
+  python3 - "$file" "$key" <<'PY'
+import json, sys
+with open(sys.argv[1], encoding="utf-8") as f:
+    print(json.load(f)[sys.argv[2]])
+PY
+}
+
+run_prepare_for_ref() {
+  ref="$1"
+  destination="$2"
+  SUPERPOWERS_REF="$ref" \
+  SUPERPOWERS_UPSTREAM_URL="$upstream" \
+  SUPERPOWERS_CACHE_DIR="$tmpdir/cache-$destination" \
+  SUPERPOWERS_PLUGIN_ROOT="$tmpdir/$destination" \
+  sh "$root/scripts/prepare" >/dev/null
+}
+
+assert_prepare_version() {
+  destination="$1"
+  expected="$2"
+  manifest="$tmpdir/$destination/.codex-plugin/plugin.json"
+  version=$(read_json_key "$manifest" version)
+  if [ "$version" != "$expected" ]; then
+    echo "unexpected wrapper version for $destination: $version (expected $expected)" >&2
+    exit 1
+  fi
+}
+
+assert_prepare_commit() {
+  destination="$1"
+  expected="$2"
+  metadata="$tmpdir/$destination/.superpowers-upstream.json"
+  actual_commit=$(read_json_key "$metadata" commit)
+  if [ "$actual_commit" != "$expected" ]; then
+    echo "metadata commit mismatch for $destination: $actual_commit != $expected" >&2
+    exit 1
+  fi
+}
+
+assert_prepare_upstream_manifest_version() {
+  destination="$1"
+  expected="$2"
+  metadata="$tmpdir/$destination/.superpowers-upstream.json"
+  actual_version=$(read_json_key "$metadata" upstream_manifest_version)
+  if [ "$actual_version" != "$expected" ]; then
+    echo "upstream manifest version mismatch for $destination: $actual_version != $expected" >&2
+    exit 1
+  fi
+}
+
+run_prepare_for_ref "latest-release" "out-latest"
+expected_short=$(printf '%s' "$release_commit" | cut -c 1-7)
+assert_prepare_commit "out-latest" "$release_commit"
+assert_prepare_version "out-latest" "6.0.3+wrapper.$expected_short"
+
+run_prepare_for_ref "v6.1.0-beta.1" "out-prerelease"
+prerelease_short=$(printf '%s' "$main_commit" | cut -c 1-7)
+assert_prepare_commit "out-prerelease" "$main_commit"
+assert_prepare_version "out-prerelease" "6.1.0-beta.1+wrapper.$prerelease_short"
+
+run_prepare_for_ref "main" "out-main"
+main_short=$(printf '%s' "$main_commit" | cut -c 1-7)
+assert_prepare_commit "out-main" "$main_commit"
+assert_prepare_version "out-main" "0.0.0-main+wrapper.$main_short"
+assert_prepare_upstream_manifest_version "out-main" "6.0.3"
+
+run_prepare_for_ref "feature/foo" "out-feature"
+feature_short=$(printf '%s' "$feature_commit" | cut -c 1-7)
+assert_prepare_commit "out-feature" "$feature_commit"
+assert_prepare_version "out-feature" "0.0.0-ref-feature-foo+wrapper.$feature_short"
+
+run_prepare_for_ref "042" "out-leading-zero"
+leading_zero_short=$(printf '%s' "$leading_zero_commit" | cut -c 1-7)
+assert_prepare_commit "out-leading-zero" "$leading_zero_commit"
+assert_prepare_version "out-leading-zero" "0.0.0-ref-042+wrapper.$leading_zero_short"
+
+run_prepare_for_ref "$feature_commit" "out-raw"
+assert_prepare_commit "out-raw" "$feature_commit"
+assert_prepare_version "out-raw" "0.0.0+wrapper.$feature_short"
+
+output="$tmpdir/out-latest"
 metadata="$output/.superpowers-upstream.json"
 manifest="$output/.codex-plugin/plugin.json"
 
@@ -54,27 +154,6 @@ test -f "$output/CODE_OF_CONDUCT.md"
 # carry the committed manifest template forward (it is a tracked file living
 # in the plugin root); otherwise a real prepare would delete it.
 test -f "$output/.codex-plugin/plugin.template.json"
-
-actual_commit=$(python3 - "$metadata" <<'PY'
-import json, sys
-print(json.load(open(sys.argv[1], encoding="utf-8"))["commit"])
-PY
-)
-if [ "$actual_commit" != "$commit" ]; then
-  echo "metadata commit mismatch: $actual_commit != $commit" >&2
-  exit 1
-fi
-
-version=$(python3 - "$manifest" <<'PY'
-import json, sys
-print(json.load(open(sys.argv[1], encoding="utf-8"))["version"])
-PY
-)
-expected_short=$(printf '%s' "$commit" | cut -c 1-7)
-if [ "$version" != "0.0.0+wrapper.$expected_short" ]; then
-  echo "unexpected wrapper version: $version (expected 0.0.0+wrapper.$expected_short)" >&2
-  exit 1
-fi
 
 if grep -Fq '"hooks"' "$manifest"; then
   echo "manifest must not contain unsupported hooks field" >&2

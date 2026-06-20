@@ -154,6 +154,39 @@ if [ -n "$installed_metadata" ]; then
   echo "Installed commit after remove/add: $(metadata_commit "$installed_metadata")"
 fi
 
+echo "Stable-to-branch version precedence probe"
+cache_root="$HOME/.codex/plugins/cache/$marketplace_name/$plugin_name"
+stable_root="$cache_root/6.0.3+wrapper.ccccccc"
+branch_root="$cache_root/0.0.0-main+wrapper.ddddddd"
+
+write_probe_plugin "cccccccccccccccccccccccccccccccccccccccc" "6.0.3+wrapper.ccccccc"
+"$codex_bin" plugin marketplace add "$probe_root" >/dev/null 2>&1 || true
+"$codex_bin" plugin add "$plugin_id" || true
+echo "Installed root after stable-looking add:"
+if [ -d "$stable_root" ]; then
+  printf '%s\n' "$stable_root"
+else
+  echo "not found"
+fi
+
+write_probe_plugin "dddddddddddddddddddddddddddddddddddddddd" "0.0.0-main+wrapper.ddddddd"
+"$codex_bin" plugin add "$plugin_id" || true
+echo "Installed root after stable-to-branch add-only refresh:"
+if [ -d "$branch_root" ]; then
+  printf '%s\n' "$branch_root"
+else
+  echo "not found"
+fi
+
+"$codex_bin" plugin remove "$plugin_id" || true
+"$codex_bin" plugin add "$plugin_id"
+echo "Installed root after stable-to-branch remove/add refresh:"
+if [ -d "$branch_root" ]; then
+  printf '%s\n' "$branch_root"
+else
+  echo "not found"
+fi
+
 echo "Hook sentinel before new-session probe:"
 if [ -f "$sentinel" ]; then
   cat "$sentinel"

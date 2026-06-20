@@ -18,9 +18,10 @@ spw_require_command git
 spw_require_command python3
 [ -f "$manifest_template" ] || spw_die "missing wrapper manifest template: $manifest_template"
 
-resolved_pair=$(spw_resolve_ref "$upstream_url" "$requested_ref")
-resolved_ref=$(printf '%s\n' "$resolved_pair" | awk '{ print $1 }')
-commit=$(printf '%s\n' "$resolved_pair" | awk '{ print $2 }')
+resolved_record=$(spw_resolve_ref "$upstream_url" "$requested_ref")
+resolution_kind=$(printf '%s\n' "$resolved_record" | awk '{ print $1 }')
+resolved_ref=$(printf '%s\n' "$resolved_record" | awk '{ print $2 }')
+commit=$(printf '%s\n' "$resolved_record" | awk '{ print $3 }')
 
 mkdir -p "$cache_parent" "$tmp_parent"
 if [ -d "$cache/.git" ]; then
@@ -67,7 +68,7 @@ spw_write_metadata_json \
 
 spw_update_manifest_version \
   "$tmp_plugin/.codex-plugin/plugin.json" \
-  "$(spw_manifest_version_for_commit "$commit")"
+  "$(spw_manifest_version_for_ref "$requested_ref" "$resolution_kind" "$resolved_ref" "$commit")"
 
 if [ -f "$validator" ]; then
   if ! python3 "$validator" "$tmp_plugin"; then

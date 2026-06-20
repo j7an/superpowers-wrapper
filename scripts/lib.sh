@@ -29,10 +29,60 @@ spw_config_ref() {
   sed -n '1{s/[[:space:]]*$//;p;}' "$root/config/upstream-ref"
 }
 
+spw_short_commit() {
+  commit="$1"
+  printf '%s' "$commit" | cut -c 1-7
+}
+
+spw_is_semver_base() {
+  version="$1"
+  printf '%s' "$version" | grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*))?$'
+}
+
+spw_sanitize_ref_for_version() {
+  ref="$1"
+  sanitized=$(printf '%s' "$ref" | sed 's/[^0-9A-Za-z-][^0-9A-Za-z-]*/-/g; s/^-*//; s/-*$//')
+  sanitized=$(printf '%s' "$sanitized" | cut -c 1-48 | sed 's/^-*//; s/-*$//')
+  if [ -z "$sanitized" ]; then
+    sanitized="unknown"
+  fi
+  printf '%s' "$sanitized"
+}
+
+spw_manifest_version_for_ref() {
+  requested_ref="$1"
+  resolution_kind="$2"
+  resolved_ref="$3"
+  commit="$4"
+  short=$(spw_short_commit "$commit")
+
+  case "$resolution_kind" in
+    latest-release|tag)
+      base=$(printf '%s' "$resolved_ref" | sed -n 's/^v//p')
+      if [ -n "$base" ] && spw_is_semver_base "$base"; then
+        printf '%s+wrapper.%s\n' "$base" "$short"
+        return
+      fi
+      ;;
+    ref)
+      if [ "$requested_ref" = "main" ]; then
+        printf '0.0.0-main+wrapper.%s\n' "$short"
+        return
+      fi
+      sanitized=$(spw_sanitize_ref_for_version "$requested_ref")
+      printf '0.0.0-ref-%s+wrapper.%s\n' "$sanitized" "$short"
+      return
+      ;;
+    raw-commit)
+      ;;
+  esac
+
+  printf '0.0.0+wrapper.%s\n' "$short"
+}
+
 spw_manifest_version_for_commit() {
   commit="$1"
-  short=$(printf '%s' "$commit" | cut -c 1-7)
-  printf '0.0.0+wrapper.%s\n' "$short"
+  spw_manifest_version_for_ref "$commit" "raw-commit" "$commit" "$commit"
 }
 
 spw_commit_matches() {
@@ -84,21 +134,26 @@ spw_resolve_ref() {
     if ! selected=$(printf '%s\n' "$output" | spw_select_latest_release_from_ls_remote); then
       spw_die "no stable semver tag found for latest-release"
     fi
-    printf '%s\n' "$selected"
+    printf 'latest-release %s\n' "$selected"
     return
   fi
 
   if printf '%s' "$requested_ref" | grep -Eq '^[0-9a-fA-F]{40}$'; then
-    printf '%s %s\n' "$requested_ref" "$requested_ref"
+    printf 'raw-commit %s %s\n' "$requested_ref" "$requested_ref"
     return
   fi
 
-  if ! tag_output=$(git ls-remote --tags "$upstream_url" "refs/tags/$requested_ref^{}" 2>&1); then
+  if ! tag_output=$(git ls-remote --tags "$upstream_url" "refs/tags/$requested_ref" "refs/tags/$requested_ref^{}" 2>&1); then
     spw_die "cannot query upstream tag $requested_ref from $upstream_url: $tag_output"
   fi
-  resolved=$(printf '%s\n' "$tag_output" | awk 'NF >= 2 { print $1; exit }')
+  resolved=$(printf '%s\n' "$tag_output" | awk -v tag_ref="refs/tags/$requested_ref" '
+    NF >= 2 && ($2 == tag_ref || $2 == tag_ref "^{}") {
+      sha = $1
+    }
+    END { if (sha != "") print sha }
+  ')
   if [ -n "$resolved" ]; then
-    printf '%s %s\n' "$requested_ref" "$resolved"
+    printf 'tag %s %s\n' "$requested_ref" "$resolved"
     return
   fi
 
@@ -107,7 +162,7 @@ spw_resolve_ref() {
   fi
   resolved=$(printf '%s\n' "$ref_output" | awk 'NF >= 2 { print $1; exit }')
   if [ -n "$resolved" ]; then
-    printf '%s %s\n' "$requested_ref" "$resolved"
+    printf 'ref %s %s\n' "$requested_ref" "$resolved"
     return
   fi
 
@@ -216,8 +271,15 @@ spw_manifest_short_sha_or_empty() {
   fi
   version=$(spw_json_get "$file" "version")
   case "$version" in
-    0.0.0+wrapper.[0-9a-fA-F]*)
-      printf '%s\n' "${version##*.}"
+    *+wrapper.*)
+      short="${version##*.}"
+      case "$short" in
+        ""|*[!0-9a-fA-F]*)
+          ;;
+        *)
+          printf '%s\n' "$short"
+          ;;
+      esac
       ;;
   esac
 }
