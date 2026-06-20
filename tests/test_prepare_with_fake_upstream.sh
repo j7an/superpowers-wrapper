@@ -32,8 +32,8 @@ cat > "$upstream/.codex-plugin/plugin.json" <<'JSON'
 }
 JSON
 git -C "$upstream" add .
-git -C "$upstream" -c user.email=superpowers-wrapper@example.invalid -c user.name=superpowers-wrapper commit -m "fake upstream" >/dev/null
-git -C "$upstream" -c user.email=superpowers-wrapper@example.invalid -c user.name=superpowers-wrapper tag -a v6.0.3 -m "fake release"
+git -C "$upstream" -c user.email=superpowers-wrapper@example.invalid -c user.name=superpowers-wrapper -c commit.gpgsign=false commit -m "fake upstream" >/dev/null
+git -C "$upstream" -c user.email=superpowers-wrapper@example.invalid -c user.name=superpowers-wrapper -c tag.gpgsign=false tag -a v6.0.3 -m "fake release"
 commit=$(git -C "$upstream" rev-list -n1 v6.0.3)
 
 SUPERPOWERS_UPSTREAM_URL="$upstream" \
@@ -50,6 +50,10 @@ test -f "$output/hooks/session-start-codex"
 test -f "$output/LICENSE"
 test -f "$output/README.md"
 test -f "$output/CODE_OF_CONDUCT.md"
+# The atomic swap replaces the whole plugin root, so the staged tree must
+# carry the committed manifest template forward (it is a tracked file living
+# in the plugin root); otherwise a real prepare would delete it.
+test -f "$output/.codex-plugin/plugin.template.json"
 
 actual_commit=$(python3 - "$metadata" <<'PY'
 import json, sys

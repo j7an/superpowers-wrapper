@@ -77,10 +77,28 @@ else
   spw_die "plugin validator not found: $validator"
 fi
 
-mkdir -p "$plugin_root"
-rm -rf "$plugin_root/assets" "$plugin_root/hooks" "$plugin_root/skills"
-rm -f "$plugin_root/.codex-plugin/plugin.json" "$plugin_root/LICENSE" "$plugin_root/README.md" "$plugin_root/CODE_OF_CONDUCT.md" "$plugin_root/.superpowers-upstream.json"
-cp -R "$tmp_plugin"/. "$plugin_root"/
-rm -rf "$tmp_plugin"
+# Include the committed manifest template in the staged tree so the swap is
+# complete: plugin.template.json is tracked and lives in the plugin root, so
+# the replacement tree must carry it too.
+cp "$manifest_template" "$tmp_plugin/.codex-plugin/plugin.template.json"
+
+# Replace the live tree with a single atomic rename, keeping a backup so a
+# failed swap restores the previous working generated tree (the spec requires
+# that a failed prepare never destroy it). tmp_plugin is a same-filesystem
+# sibling of plugin_root, so the renames cannot fail mid-copy.
+backup="$tmp_parent/.superpowers.bak.$$"
+rm -rf "$backup"
+if [ -e "$plugin_root" ]; then
+  mv "$plugin_root" "$backup"
+fi
+if mv "$tmp_plugin" "$plugin_root"; then
+  rm -rf "$backup"
+else
+  if [ -e "$backup" ]; then
+    mv "$backup" "$plugin_root"
+  fi
+  rm -rf "$tmp_plugin"
+  spw_die "failed to install generated tree into $plugin_root; previous tree restored"
+fi
 
 echo "prepared $resolved_ref at $commit"
