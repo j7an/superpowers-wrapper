@@ -7,10 +7,27 @@ trap 'rm -rf "$tmpdir"' EXIT INT TERM
 
 upstream="$tmpdir/upstream"
 output="$tmpdir/out"
+home="$tmpdir/home"
+validator_log="$tmpdir/validator.log"
 template="$root/plugins/superpowers/.codex-plugin/plugin.template.json"
 template_before=$(cksum "$template")
 
 mkdir -p "$upstream/skills/brainstorming" "$upstream/assets" "$upstream/hooks" "$upstream/.codex-plugin"
+mkdir -p "$home/.codex/skills/.system/plugin-creator/scripts"
+cat > "$home/.codex/skills/.system/plugin-creator/scripts/validate_plugin.py" <<'PY'
+import os
+import sys
+
+plugin_root = sys.argv[1]
+manifest = os.path.join(plugin_root, ".codex-plugin", "plugin.json")
+if not os.path.isfile(manifest):
+    print(f"missing manifest: {manifest}", file=sys.stderr)
+    sys.exit(1)
+
+log = os.environ["SUPERPOWERS_FAKE_VALIDATOR_LOG"]
+with open(log, "a", encoding="utf-8") as f:
+    f.write(plugin_root + "\n")
+PY
 git -C "$tmpdir" init upstream >/dev/null
 cat > "$upstream/skills/brainstorming/SKILL.md" <<'EOF'
 ---
@@ -74,6 +91,9 @@ run_prepare_for_ref() {
   SUPERPOWERS_UPSTREAM_URL="$upstream" \
   SUPERPOWERS_CACHE_DIR="$tmpdir/cache-$destination" \
   SUPERPOWERS_PLUGIN_ROOT="$tmpdir/$destination" \
+  SUPERPOWERS_VALIDATOR= \
+  SUPERPOWERS_FAKE_VALIDATOR_LOG="$validator_log" \
+  HOME="$home" \
   sh "$root/scripts/prepare" >/dev/null
 }
 
@@ -157,6 +177,11 @@ test -f "$output/.codex-plugin/plugin.template.json"
 
 if grep -Fq '"hooks"' "$manifest"; then
   echo "manifest must not contain unsupported hooks field" >&2
+  exit 1
+fi
+
+if [ ! -s "$validator_log" ]; then
+  echo "prepare did not use the default validator from HOME/.codex" >&2
   exit 1
 fi
 
