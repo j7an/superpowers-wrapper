@@ -138,4 +138,15 @@ printf '%s\n' 'not json {{{' > "$state/marketplace_list.json"
 expect_fail
 assert_no_removes
 
+# --- Scenario 4: remove is a no-op (fixtures unchanged) -> verify-after must
+#     detect the still-present target and fail ---
+reset
+printf '%s\n' "$plugin_present" > "$state/plugin_list.json"
+printf '%s\n' "$marketplace_present" > "$state/marketplace_list.json"
+: > "$state/remove_noop"   # removes are logged but do not mutate the fixtures
+expect_fail
+# the removal was attempted...
+grep -Fq "plugin remove superpowers@superpowers-wrapper" "$log"
+# ...but the plugin is still present on re-query, so uninstall must NOT succeed
+
 echo "test_uninstall_commands: OK"
