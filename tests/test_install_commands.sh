@@ -5,38 +5,295 @@ root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 tmpdir=$(mktemp -d)
 trap 'rm -rf "$tmpdir"' EXIT INT TERM
 
+# ---------------------------------------------------------------------------
+# Harness: a fake upstream git repo, a copied package root (running install
+# from the real repo root would dirty the working tree), a fake validator,
+# and a fake codex whose marketplace/plugin state lives in $state.
+# ---------------------------------------------------------------------------
+
+# --- Fake upstream with one stable release tag ---
+upstream="$tmpdir/upstream"
+mkdir -p "$upstream/skills/brainstorming"
+cat > "$upstream/skills/brainstorming/SKILL.md" <<'EOF'
+---
+name: brainstorming
+description: Fake upstream skill
+---
+# Brainstorming
+EOF
+printf 'license\n' > "$upstream/LICENSE"
+printf 'readme\n' > "$upstream/README.md"
+printf 'code\n' > "$upstream/CODE_OF_CONDUCT.md"
+git -C "$tmpdir" init upstream >/dev/null
+git -C "$upstream" add .
+git -C "$upstream" -c user.email=superpowers-wrapper@example.invalid -c user.name=superpowers-wrapper -c commit.gpgsign=false commit -m "fake upstream" >/dev/null
+git -C "$upstream" -c user.email=superpowers-wrapper@example.invalid -c user.name=superpowers-wrapper -c tag.gpgsign=false tag -a v1.0.0 -m "fake release"
+
+# --- Copied package root (simulates the npx-materialized package) ---
+pkg="$tmpdir/pkg"
+mkdir -p "$pkg/plugins/superpowers/.codex-plugin"
+cp -R "$root/scripts" "$pkg/scripts"
+cp -R "$root/config" "$pkg/config"
+cp "$root/plugins/superpowers/.codex-plugin/plugin.template.json" "$pkg/plugins/superpowers/.codex-plugin/plugin.template.json"
+test -x "$pkg/scripts/install" || { echo "install must remain executable in the packaged root" >&2; exit 1; }
+
+# --- Validators ---
+validator="$tmpdir/validator.py"
+cat > "$validator" <<'PY'
+import os, sys
+plugin_root = sys.argv[1]
+if not os.path.isfile(os.path.join(plugin_root, ".codex-plugin", "plugin.json")):
+    sys.exit(1)
+PY
+failing_validator="$tmpdir/failing_validator.py"
+cat > "$failing_validator" <<'PY'
+import sys
+sys.exit(1)
+PY
+
+# --- Fake codex: logs argv; marketplace state is a JSON fixture it mutates;
+#     `plugin add` copies the generated metadata into a Codex-like cache so
+#     the post-install verifier can find it. Behavior flags are marker files. ---
+state="$tmpdir/state"
+mkdir -p "$state"
 fake_codex="$tmpdir/codex"
-log="$tmpdir/codex.log"
-cat > "$fake_codex" <<EOF
+log="$state/codex.log"
+cat > "$fake_codex" <<'EOF'
 #!/bin/sh
-printf '%s\n' "\$*" >> "$log"
+state=$(CDPATH= cd -- "$(dirname "$0")" && pwd)/state
+printf '%s\n' "$*" >> "$state/codex.log"
+
+if [ "$1" = plugin ] && [ "$2" = marketplace ] && [ "$3" = list ]; then
+  rc=0; [ -f "$state/marketplace_list.rc" ] && rc=$(cat "$state/marketplace_list.rc")
+  cat "$state/marketplace_list.json"
+  exit "$rc"
+fi
+if [ "$1" = plugin ] && [ "$2" = marketplace ] && [ "$3" = add ]; then
+  [ -f "$state/marketplace_add_fail" ] && exit 1
+  python3 - "$state/marketplace_list.json" "$4" <<'PY'
+import json, sys
+path, new_root = sys.argv[1], sys.argv[2]
+with open(path, encoding="utf-8") as f:
+    data = json.load(f)
+data["marketplaces"] = [m for m in data["marketplaces"] if m.get("name") != "superpowers-wrapper"]
+data["marketplaces"].append({"name": "superpowers-wrapper", "root": new_root})
+with open(path, "w", encoding="utf-8") as f:
+    json.dump(data, f)
+PY
+  exit 0
+fi
+if [ "$1" = plugin ] && [ "$2" = marketplace ] && [ "$3" = remove ]; then
+  python3 - "$state/marketplace_list.json" "$4" <<'PY'
+import json, sys
+path, name = sys.argv[1], sys.argv[2]
+with open(path, encoding="utf-8") as f:
+    data = json.load(f)
+data["marketplaces"] = [m for m in data["marketplaces"] if m.get("name") != name]
+with open(path, "w", encoding="utf-8") as f:
+    json.dump(data, f)
+PY
+  exit 0
+fi
+if [ "$1" = plugin ] && [ "$2" = add ]; then
+  [ -f "$state/plugin_add_noop" ] && exit 0
+  dest="$state/codex-home/plugins/cache/superpowers-wrapper/superpowers/1.0.0"
+  mkdir -p "$dest"
+  cp "$SPW_TEST_PKG_ROOT/plugins/superpowers/.superpowers-upstream.json" "$dest/.superpowers-upstream.json"
+  if [ -f "$state/plugin_add_stale" ]; then
+    python3 - "$dest/.superpowers-upstream.json" <<'PY'
+import json, sys
+path = sys.argv[1]
+with open(path, encoding="utf-8") as f:
+    data = json.load(f)
+data["commit"] = "0" * 40
+with open(path, "w", encoding="utf-8") as f:
+    json.dump(data, f)
+PY
+  fi
+  exit 0
+fi
+if [ "$1" = plugin ] && [ "$2" = remove ]; then
+  rm -rf "$state/codex-home/plugins/cache/superpowers-wrapper"
+  exit 0
+fi
 exit 0
 EOF
 chmod +x "$fake_codex"
 
-SUPERPOWERS_CODEX="$fake_codex" SUPERPOWERS_INSTALL_REFRESH_MODE="add-only" sh "$root/scripts/install"
+marketplace_absent='{"marketplaces":[{"name":"openai-curated","root":"/x"}]}'
 
-grep -Fq "plugin marketplace add $root" "$log"
-grep -Fq "plugin add superpowers@superpowers-wrapper" "$log"
-# Order matters: the marketplace must be re-snapshotted before install.
-mp_line=$(grep -Fn "plugin marketplace add" "$log" | head -n1 | cut -d: -f1)
-pa_line=$(grep -Fn "plugin add superpowers@superpowers-wrapper" "$log" | head -n1 | cut -d: -f1)
-[ "$mp_line" -lt "$pa_line" ] || { echo "marketplace add must precede plugin add" >&2; exit 1; }
-if grep -Fq "openai-curated" "$log"; then
-  echo "install script must not touch openai-curated" >&2
+reset() {
+  rm -f "$state/marketplace_list.rc" "$state/marketplace_add_fail" \
+        "$state/plugin_add_noop" "$state/plugin_add_stale"
+  rm -rf "$state/codex-home"
+  : > "$log"
+}
+
+run_install() {
+  env \
+    SUPERPOWERS_CODEX="$fake_codex" \
+    SUPERPOWERS_UPSTREAM_URL="$upstream" \
+    SUPERPOWERS_VALIDATOR="$validator" \
+    SUPERPOWERS_INSTALLED_SEARCH_ROOT="$state/codex-home" \
+    SPW_TEST_PKG_ROOT="$pkg" \
+    "$@" \
+    sh "$pkg/scripts/install"
+}
+
+expect_fail() {
+  if run_install "$@" >"$state/out" 2>&1; then
+    echo "expected install to fail but it succeeded" >&2
+    cat "$state/out" >&2
+    exit 1
+  fi
+}
+
+line_of() {
+  grep -Fn "$1" "$log" | head -n1 | cut -d: -f1
+}
+
+# ---------------------------------------------------------------------------
+# Scenario V: validation failure leaves Codex completely untouched.
+# Run FIRST, while the package root has no generated tree, so install must
+# take the prepare path and hit the failing validator before any codex call.
+# ---------------------------------------------------------------------------
+reset
+printf '%s\n' "$marketplace_absent" > "$state/marketplace_list.json"
+if env \
+    SUPERPOWERS_CODEX="$fake_codex" \
+    SUPERPOWERS_UPSTREAM_URL="$upstream" \
+    SUPERPOWERS_VALIDATOR="$failing_validator" \
+    SUPERPOWERS_INSTALLED_SEARCH_ROOT="$state/codex-home" \
+    SPW_TEST_PKG_ROOT="$pkg" \
+    sh "$pkg/scripts/install" >"$state/out" 2>&1; then
+  echo "expected install to fail on validation" >&2
+  cat "$state/out" >&2
+  exit 1
+fi
+if [ -s "$log" ]; then
+  echo "validation failure must leave Codex untouched; log was:" >&2
+  cat "$log" >&2
   exit 1
 fi
 
-: > "$log"
-SUPERPOWERS_CODEX="$fake_codex" SUPERPOWERS_INSTALL_REFRESH_MODE="remove-add" sh "$root/scripts/install"
-grep -Fq "plugin remove superpowers@superpowers-wrapper" "$log"
-grep -Fq "plugin add superpowers@superpowers-wrapper" "$log"
-# Order: marketplace add, then wrapper-only remove, then plugin add.
-mp_line=$(grep -Fn "plugin marketplace add" "$log" | head -n1 | cut -d: -f1)
-rm_line=$(grep -Fn "plugin remove superpowers@superpowers-wrapper" "$log" | head -n1 | cut -d: -f1)
-pa_line=$(grep -Fn "plugin add superpowers@superpowers-wrapper" "$log" | head -n1 | cut -d: -f1)
-{ [ "$mp_line" -lt "$rm_line" ] && [ "$rm_line" -lt "$pa_line" ]; } || { echo "order must be: marketplace add, remove, plugin add" >&2; exit 1; }
+# ---------------------------------------------------------------------------
+# Scenario 1: fresh install — prepare runs, marketplace listed before added,
+# marketplace added before plugin add, fingerprint verified.
+# ---------------------------------------------------------------------------
+reset
+printf '%s\n' "$marketplace_absent" > "$state/marketplace_list.json"
+run_install > "$state/out"
+test -f "$pkg/plugins/superpowers/.superpowers-upstream.json" || { echo "prepare must have generated the tree" >&2; exit 1; }
+list_line=$(line_of "plugin marketplace list")
+add_line=$(line_of "plugin marketplace add $pkg")
+pa_line=$(line_of "plugin add superpowers@superpowers-wrapper")
+{ [ "$list_line" -lt "$add_line" ] && [ "$add_line" -lt "$pa_line" ]; } || {
+  echo "order must be: marketplace list, marketplace add, plugin add" >&2; cat "$log" >&2; exit 1; }
+grep -Fq "wrapper updated" "$state/out"
+if grep -Fq "marketplace remove" "$log"; then
+  echo "fresh install must not remove any marketplace" >&2; exit 1
+fi
 if grep -Fq "openai-curated" "$log"; then
-  echo "remove-add mode must not touch openai-curated" >&2
+  echo "install must never name openai-curated" >&2; exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# Scenario 2: registered at the same physical root via a symlink -> keep.
+# Portable equivalent of macOS /var vs /private/var normalization.
+# ---------------------------------------------------------------------------
+reset
+ln -s "$pkg" "$tmpdir/pkg-link"
+printf '{"marketplaces":[{"name":"superpowers-wrapper","root":"%s"}]}\n' "$tmpdir/pkg-link" > "$state/marketplace_list.json"
+run_install > "$state/out"
+if grep -Fq "marketplace add" "$log" || grep -Fq "marketplace remove" "$log"; then
+  echo "same-root install must not re-register the marketplace" >&2; cat "$log" >&2; exit 1
+fi
+grep -Fq "plugin add superpowers@superpowers-wrapper" "$log"
+
+# ---------------------------------------------------------------------------
+# Scenario 3: registered at a different root -> remove then add, in order.
+# ---------------------------------------------------------------------------
+reset
+printf '{"marketplaces":[{"name":"openai-curated","root":"/x"},{"name":"superpowers-wrapper","root":"%s"}]}\n' "$tmpdir/otherroot" > "$state/marketplace_list.json"
+run_install > "$state/out"
+rm_line=$(line_of "plugin marketplace remove superpowers-wrapper")
+add_line=$(line_of "plugin marketplace add $pkg")
+pa_line=$(line_of "plugin add superpowers@superpowers-wrapper")
+{ [ "$rm_line" -lt "$add_line" ] && [ "$add_line" -lt "$pa_line" ]; } || {
+  echo "order must be: marketplace remove, marketplace add, plugin add" >&2; cat "$log" >&2; exit 1; }
+if grep -Fq "marketplace remove openai-curated" "$log"; then
+  echo "must only ever remove the wrapper marketplace" >&2; exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# Scenario 4: remove succeeds, add fails -> non-zero, recovery message names
+# the current root AND the previous root; plugin add never attempted.
+# ---------------------------------------------------------------------------
+reset
+printf '{"marketplaces":[{"name":"superpowers-wrapper","root":"%s"}]}\n' "$tmpdir/otherroot" > "$state/marketplace_list.json"
+: > "$state/marketplace_add_fail"
+expect_fail
+grep -Fq "plugin marketplace add $pkg" "$state/out"
+grep -Fq "$tmpdir/otherroot" "$state/out"
+if grep -Fq "plugin add superpowers@superpowers-wrapper" "$log"; then
+  echo "plugin add must not run after a failed marketplace add" >&2; exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# Scenario 5: malformed marketplace listing -> abort before any mutation.
+# ---------------------------------------------------------------------------
+reset
+printf '%s\n' 'not json {{{' > "$state/marketplace_list.json"
+expect_fail
+if grep -Eq "marketplace (add|remove)|^plugin (add|remove)" "$log"; then
+  echo "parse failure must abort before any mutation; log was:" >&2
+  cat "$log" >&2
   exit 1
 fi
+
+# ---------------------------------------------------------------------------
+# Scenario 6: plugin add refreshes nothing -> unverifiable warning, exit 0.
+# ---------------------------------------------------------------------------
+reset
+printf '%s\n' "$marketplace_absent" > "$state/marketplace_list.json"
+: > "$state/plugin_add_noop"
+run_install > "$state/out" 2>&1
+grep -Fq "installed wrapper not detectable" "$state/out"
+
+# ---------------------------------------------------------------------------
+# Scenario 7: installed fingerprint stays stale -> install fails, no success.
+# ---------------------------------------------------------------------------
+reset
+printf '%s\n' "$marketplace_absent" > "$state/marketplace_list.json"
+: > "$state/plugin_add_stale"
+expect_fail
+grep -Fq "still stale" "$state/out"
+if grep -Fq "wrapper updated" "$state/out"; then
+  echo "must not print success while stale" >&2; exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# Scenario 8: remove-add refresh mode -> plugin remove between marketplace
+# reconcile and plugin add; still only wrapper-scoped.
+# ---------------------------------------------------------------------------
+reset
+printf '%s\n' "$marketplace_absent" > "$state/marketplace_list.json"
+run_install SUPERPOWERS_INSTALL_REFRESH_MODE=remove-add > "$state/out"
+rm_line=$(line_of "plugin remove superpowers@superpowers-wrapper")
+pa_line=$(line_of "plugin add superpowers@superpowers-wrapper")
+[ "$rm_line" -lt "$pa_line" ] || { echo "plugin remove must precede plugin add" >&2; exit 1; }
+if grep -Fq "openai-curated" "$log"; then
+  echo "remove-add mode must not touch openai-curated" >&2; exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# Scenario 9: invalid refresh mode -> fails before any codex call.
+# ---------------------------------------------------------------------------
+reset
+printf '%s\n' "$marketplace_absent" > "$state/marketplace_list.json"
+expect_fail SUPERPOWERS_INSTALL_REFRESH_MODE=bogus
+if [ -s "$log" ]; then
+  echo "invalid refresh mode must fail before any codex call" >&2; exit 1
+fi
+
+echo "test_install_commands: OK"
