@@ -4,34 +4,6 @@ set -eu
 root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 . "$root/scripts/lib.sh"
 
-# After an install, re-probe and confirm the installed wrapper actually
-# refreshed. `update` never prints a success line while the installed wrapper
-# is detectably stale; if the local plugin cache did not refresh it fails with
-# a hint to use the remove/add refresh mode.
-verify_refresh() {
-  out=$(sh "$root/scripts/probe" --porcelain)
-  printf '%s\n' "$out"
-  st=$(printf '%s\n' "$out" | awk -F= '$1 == "status" { print $2 }')
-  inst=$(printf '%s\n' "$out" | awk -F= '$1 == "installed_commit" { print $2 }')
-  case "$(spw_post_install_status "$st" "$inst")" in
-    ok)
-      echo "wrapper updated"
-      ;;
-    stale)
-      echo "error: installed wrapper is still stale after install; the local plugin cache did not refresh." >&2
-      echo "hint: retry with SUPERPOWERS_INSTALL_REFRESH_MODE=remove-add scripts/update" >&2
-      exit 1
-      ;;
-    unverifiable)
-      echo "warning: installed wrapper not detectable, cannot confirm refresh; verify with 'codex plugin list --json'." >&2
-      ;;
-    *)
-      echo "error: unexpected post-install status: $st" >&2
-      exit 1
-      ;;
-  esac
-}
-
 probe_output=$(sh "$root/scripts/probe" --porcelain)
 status=$(printf '%s\n' "$probe_output" | awk -F= '$1 == "status" { print $2 }')
 
@@ -43,11 +15,15 @@ case "$status" in
   needs\ prepare)
     sh "$root/scripts/prepare"
     sh "$root/scripts/install"
-    verify_refresh
+    desired_commit=$(spw_metadata_commit_or_empty "$root/plugins/superpowers/.superpowers-upstream.json" || true)
+    [ -n "$desired_commit" ] || spw_die "generated metadata missing desired commit after install"
+    spw_verify_refresh "$desired_commit"
     ;;
   needs\ install)
     sh "$root/scripts/install"
-    verify_refresh
+    desired_commit=$(spw_metadata_commit_or_empty "$root/plugins/superpowers/.superpowers-upstream.json" || true)
+    [ -n "$desired_commit" ] || spw_die "generated metadata missing desired commit after install"
+    spw_verify_refresh "$desired_commit"
     ;;
   *)
     echo "$probe_output"
