@@ -8,25 +8,26 @@ trap 'rm -rf "$tmpdir"' EXIT INT TERM
 upstream="$tmpdir/upstream"
 output="$tmpdir/out"
 home="$tmpdir/home"
-validator_log="$tmpdir/validator.log"
 template="$root/plugins/superpowers/.codex-plugin/plugin.template.json"
 template_before=$(cksum "$template")
 
 mkdir -p "$upstream/skills/brainstorming" "$upstream/assets" "$upstream/hooks"
-mkdir -p "$home/.codex/skills/.system/plugin-creator/scripts"
-cat > "$home/.codex/skills/.system/plugin-creator/scripts/validate_plugin.py" <<'PY'
+mkdir -p "$home"
+additional_validator="$tmpdir/additional-validator.py"
+validator_log="$tmpdir/additional-validator.log"
+cat > "$additional_validator" <<'PY'
 import os
 import sys
 
 plugin_root = sys.argv[1]
-manifest = os.path.join(plugin_root, ".codex-plugin", "plugin.json")
-if not os.path.isfile(manifest):
-    print(f"missing manifest: {manifest}", file=sys.stderr)
+required = os.path.join(plugin_root, ".codex-plugin", "plugin.template.json")
+if not os.path.isfile(required):
+    print(f"additional validator did not receive complete candidate: {required}", file=sys.stderr)
     sys.exit(1)
 
-log = os.environ["SUPERPOWERS_FAKE_VALIDATOR_LOG"]
-with open(log, "a", encoding="utf-8") as f:
-    f.write(plugin_root + "\n")
+with open(os.environ["SUPERPOWERS_FAKE_VALIDATOR_LOG"], "a", encoding="utf-8") as handle:
+    handle.write(plugin_root + "\n")
+print("additional validator ran")
 PY
 git -C "$tmpdir" init upstream >/dev/null
 cat > "$upstream/skills/brainstorming/SKILL.md" <<'EOF'
@@ -72,6 +73,63 @@ git -C "$upstream" add skills/brainstorming/branch.txt
 git -C "$upstream" -c user.email=superpowers-wrapper@example.invalid -c user.name=superpowers-wrapper -c commit.gpgsign=false commit -m "main branch update" >/dev/null
 main_commit=$(git -C "$upstream" rev-parse HEAD)
 git -C "$upstream" -c user.email=superpowers-wrapper@example.invalid -c user.name=superpowers-wrapper -c tag.gpgsign=false tag -a v6.1.0-beta.1 -m "fake prerelease"
+
+git -C "$upstream" checkout -b invalid-skill >/dev/null
+cat > "$upstream/skills/brainstorming/SKILL.md" <<'EOF'
+---
+name: brainstorming
+---
+# Missing description
+EOF
+git -C "$upstream" add skills/brainstorming/SKILL.md
+git -C "$upstream" -c user.email=superpowers-wrapper@example.invalid -c user.name=superpowers-wrapper -c commit.gpgsign=false commit -m "invalid skill frontmatter" >/dev/null
+git -C "$upstream" checkout main >/dev/null
+
+git -C "$upstream" checkout -b nonstandard-json >/dev/null
+python3 - "$upstream/.codex-plugin/plugin.json" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+path.write_text(text.replace('"preserved": true', '"preserved": NaN'), encoding="utf-8")
+PY
+git -C "$upstream" add .codex-plugin/plugin.json
+git -C "$upstream" -c user.email=superpowers-wrapper@example.invalid -c user.name=superpowers-wrapper -c commit.gpgsign=false commit -m "nonstandard manifest JSON" >/dev/null
+git -C "$upstream" checkout main >/dev/null
+
+git -C "$upstream" checkout -b unreadable-manifest >/dev/null
+printf '\377' > "$upstream/.codex-plugin/plugin.json"
+git -C "$upstream" add .codex-plugin/plugin.json
+git -C "$upstream" -c user.email=superpowers-wrapper@example.invalid -c user.name=superpowers-wrapper -c commit.gpgsign=false commit -m "non-UTF-8 manifest" >/dev/null
+git -C "$upstream" checkout main >/dev/null
+
+git -C "$upstream" checkout -b unencodable-manifest-version >/dev/null
+python3 - "$upstream/.codex-plugin/plugin.json" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+path.write_text(text.replace('"version": "6.0.3"', '"version": "\\ud800"'), encoding="utf-8")
+PY
+git -C "$upstream" add .codex-plugin/plugin.json
+git -C "$upstream" -c user.email=superpowers-wrapper@example.invalid -c user.name=superpowers-wrapper -c commit.gpgsign=false commit -m "unencodable manifest version" >/dev/null
+git -C "$upstream" checkout main >/dev/null
+
+git -C "$upstream" checkout -b deeply-nested-json >/dev/null
+python3 - "$upstream/.codex-plugin/plugin.json" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+nested = "[" * 2000 + "0" + "]" * 2000
+path.write_text(text.replace('"preserved": true', f'"preserved": {nested}'), encoding="utf-8")
+PY
+git -C "$upstream" add .codex-plugin/plugin.json
+git -C "$upstream" -c user.email=superpowers-wrapper@example.invalid -c user.name=superpowers-wrapper -c commit.gpgsign=false commit -m "deeply nested manifest JSON" >/dev/null
+git -C "$upstream" checkout main >/dev/null
 
 git -C "$upstream" checkout -b feature/foo >/dev/null
 printf 'feature data\n' > "$upstream/skills/brainstorming/feature.txt"
@@ -152,7 +210,6 @@ run_prepare_for_ref() {
   SUPERPOWERS_CACHE_DIR="$tmpdir/cache-$destination" \
   SUPERPOWERS_PLUGIN_ROOT="$tmpdir/$destination" \
   SUPERPOWERS_VALIDATOR= \
-  SUPERPOWERS_FAKE_VALIDATOR_LOG="$validator_log" \
   HOME="$home" \
   sh "$root/scripts/prepare" >/dev/null
 }
@@ -165,7 +222,6 @@ assert_bad_manifest_error() {
     SUPERPOWERS_CACHE_DIR="$tmpdir/cache-$destination" \
     SUPERPOWERS_PLUGIN_ROOT="$tmpdir/$destination" \
     SUPERPOWERS_VALIDATOR= \
-    SUPERPOWERS_FAKE_VALIDATOR_LOG="$validator_log" \
     HOME="$home" \
     sh "$root/scripts/prepare" >"$tmpdir/$destination.out" 2>"$err"; then
     echo "prepare unexpectedly accepted a malformed upstream manifest" >&2
@@ -178,6 +234,33 @@ assert_bad_manifest_error() {
   fi
   if grep -q 'Traceback' "$err"; then
     echo "bad manifest error must not include a Python traceback" >&2
+    cat "$err" >&2
+    exit 1
+  fi
+}
+
+assert_rejected_manifest_input() {
+  ref="$1"
+  destination="$2"
+  expected="$3"
+  err="$tmpdir/$destination.err"
+  if SUPERPOWERS_REF="$ref" \
+    SUPERPOWERS_UPSTREAM_URL="$upstream" \
+    SUPERPOWERS_CACHE_DIR="$tmpdir/cache-$destination" \
+    SUPERPOWERS_PLUGIN_ROOT="$tmpdir/$destination" \
+    SUPERPOWERS_VALIDATOR= \
+    HOME="$home" \
+    sh "$root/scripts/prepare" >"$tmpdir/$destination.out" 2>"$err"; then
+    echo "prepare unexpectedly accepted invalid manifest input: $ref" >&2
+    exit 1
+  fi
+  if ! grep -Fq "$expected" "$err"; then
+    echo "manifest input error did not contain expected diagnostic: $expected" >&2
+    cat "$err" >&2
+    exit 1
+  fi
+  if grep -q 'Traceback' "$err"; then
+    echo "manifest input error must not include a Python traceback" >&2
     cat "$err" >&2
     exit 1
   fi
@@ -262,6 +345,25 @@ assert_prepare_commit "out-raw" "$feature_commit"
 assert_prepare_version "out-raw" "0.0.0+wrapper.$feature_short"
 
 assert_bad_manifest_error "out-bad-manifest"
+assert_rejected_manifest_input "nonstandard-json" "out-nonstandard-json" "invalid JSON in"
+assert_rejected_manifest_input "unreadable-manifest" "out-unreadable-manifest" "cannot read JSON in"
+assert_rejected_manifest_input "unencodable-manifest-version" "out-unencodable-version" "cannot output JSON value from"
+assert_rejected_manifest_input "deeply-nested-json" "out-deeply-nested" "JSON nesting exceeds limit in"
+
+unreadable_json="$tmpdir/json-directory"
+mkdir "$unreadable_json"
+printf 'sentinel\n' > "$unreadable_json/sentinel"
+if ( . "$root/scripts/lib.sh"; spw_json_get "$unreadable_json" version ) \
+  >"$tmpdir/unreadable-json.out" 2>"$tmpdir/unreadable-json.err"; then
+  echo "JSON helper unexpectedly accepted an unreadable file" >&2
+  exit 1
+fi
+grep -Fq "cannot read JSON in $unreadable_json" "$tmpdir/unreadable-json.err"
+if grep -q 'Traceback' "$tmpdir/unreadable-json.err"; then
+  echo "unreadable JSON error must not include a Python traceback" >&2
+  cat "$tmpdir/unreadable-json.err" >&2
+  exit 1
+fi
 
 output="$tmpdir/out-latest"
 metadata="$output/.superpowers-upstream.json"
@@ -269,10 +371,8 @@ manifest="$output/.codex-plugin/plugin.json"
 
 test -f "$output/skills/brainstorming/SKILL.md"
 test -f "$output/assets/superpowers-small.svg"
-# The fake upstream ships hooks/ (see fixture above), but the generated Codex
-# plugin must exclude it entirely: Codex's plugin validator rejects a hooks
-# manifest field, and shipping no hooks/ directory means Codex's hooks.json
-# auto-discovery has nothing to register.
+# The fake upstream ships hooks/, but the wrapper's generated-tree contract is
+# deliberately hook-free: no manifest hooks key and no physical hooks/ directory.
 if [ -e "$output/hooks" ]; then
   echo "generated plugin must not contain a hooks/ directory" >&2
   exit 1
@@ -287,13 +387,74 @@ test -f "$output/.codex-plugin/plugin.template.json"
 
 assert_manifest_lacks_key "out-latest" "hooks"
 
-if [ ! -s "$validator_log" ]; then
-  echo "prepare did not use the default validator from HOME/.codex" >&2
+# Empty HOME and an unset/empty override must use only the shipped validator.
+if [ -e "$home/.codex/skills/.system/plugin-creator/scripts/validate_plugin.py" ]; then
+  echo "test HOME must not provide the Codex plugin-creator validator" >&2
   exit 1
 fi
+
+# The template must already be in the candidate when validation runs.
+: > "$validator_log"
+additional_out="$tmpdir/additional.out"
+SUPERPOWERS_REF="latest-release" \
+SUPERPOWERS_UPSTREAM_URL="$upstream" \
+SUPERPOWERS_CACHE_DIR="$tmpdir/cache-additional" \
+SUPERPOWERS_PLUGIN_ROOT="$tmpdir/out-additional" \
+SUPERPOWERS_VALIDATOR="$additional_validator" \
+SUPERPOWERS_FAKE_VALIDATOR_LOG="$validator_log" \
+HOME="$home" \
+sh "$root/scripts/prepare" >"$additional_out"
+builtin_line=$(grep -Fn "generated plugin validation passed" "$additional_out" | head -n1 | cut -d: -f1)
+additional_line=$(grep -Fn "additional validator ran" "$additional_out" | head -n1 | cut -d: -f1)
+[ "$builtin_line" -lt "$additional_line" ] || {
+  echo "built-in validation must run before the additional validator" >&2
+  cat "$additional_out" >&2
+  exit 1
+}
+[ -s "$validator_log" ] || { echo "explicit additional validator did not run" >&2; exit 1; }
+
+# A configured additional validator path must exist.
+if SUPERPOWERS_REF="latest-release" \
+  SUPERPOWERS_UPSTREAM_URL="$upstream" \
+  SUPERPOWERS_CACHE_DIR="$tmpdir/cache-missing-additional" \
+  SUPERPOWERS_PLUGIN_ROOT="$tmpdir/out-missing-additional" \
+  SUPERPOWERS_VALIDATOR="$tmpdir/does-not-exist.py" \
+  HOME="$home" \
+  sh "$root/scripts/prepare" >"$tmpdir/missing-additional.out" 2>&1; then
+  echo "prepare unexpectedly accepted a missing additional validator" >&2
+  exit 1
+fi
+grep -Fq "additional plugin validator not found" "$tmpdir/missing-additional.out"
+
+# A built-in failure must prevent the additional validator and the atomic swap.
+: > "$validator_log"
+cp -R "$tmpdir/out-latest" "$tmpdir/out-invalid-skill"
+printf 'preserve me\n' > "$tmpdir/out-invalid-skill/preexisting-sentinel"
+if SUPERPOWERS_REF="invalid-skill" \
+  SUPERPOWERS_UPSTREAM_URL="$upstream" \
+  SUPERPOWERS_CACHE_DIR="$tmpdir/cache-invalid-skill" \
+  SUPERPOWERS_PLUGIN_ROOT="$tmpdir/out-invalid-skill" \
+  SUPERPOWERS_VALIDATOR="$additional_validator" \
+  SUPERPOWERS_FAKE_VALIDATOR_LOG="$validator_log" \
+  HOME="$home" \
+  sh "$root/scripts/prepare" >"$tmpdir/invalid-skill.out" 2>"$tmpdir/invalid-skill.err"; then
+  echo "prepare unexpectedly accepted invalid skill frontmatter" >&2
+  exit 1
+fi
+grep -Fq "exactly one top-level \`description:\`" "$tmpdir/invalid-skill.err"
+[ ! -s "$validator_log" ] || {
+  echo "additional validator must not run after built-in failure" >&2
+  exit 1
+}
+[ -f "$tmpdir/out-invalid-skill/preexisting-sentinel" ] || {
+  echo "built-in failure must preserve the previous generated tree" >&2
+  exit 1
+}
 
 template_after=$(cksum "$template")
 if [ "$template_before" != "$template_after" ]; then
   echo "prepare test must not mutate the committed manifest template" >&2
   exit 1
 fi
+
+echo "test_prepare_with_fake_upstream: OK"
