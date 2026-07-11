@@ -85,6 +85,52 @@ git -C "$upstream" add skills/brainstorming/SKILL.md
 git -C "$upstream" -c user.email=superpowers-wrapper@example.invalid -c user.name=superpowers-wrapper -c commit.gpgsign=false commit -m "invalid skill frontmatter" >/dev/null
 git -C "$upstream" checkout main >/dev/null
 
+git -C "$upstream" checkout -b nonstandard-json >/dev/null
+python3 - "$upstream/.codex-plugin/plugin.json" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+path.write_text(text.replace('"preserved": true', '"preserved": NaN'), encoding="utf-8")
+PY
+git -C "$upstream" add .codex-plugin/plugin.json
+git -C "$upstream" -c user.email=superpowers-wrapper@example.invalid -c user.name=superpowers-wrapper -c commit.gpgsign=false commit -m "nonstandard manifest JSON" >/dev/null
+git -C "$upstream" checkout main >/dev/null
+
+git -C "$upstream" checkout -b unreadable-manifest >/dev/null
+printf '\377' > "$upstream/.codex-plugin/plugin.json"
+git -C "$upstream" add .codex-plugin/plugin.json
+git -C "$upstream" -c user.email=superpowers-wrapper@example.invalid -c user.name=superpowers-wrapper -c commit.gpgsign=false commit -m "non-UTF-8 manifest" >/dev/null
+git -C "$upstream" checkout main >/dev/null
+
+git -C "$upstream" checkout -b unencodable-manifest-version >/dev/null
+python3 - "$upstream/.codex-plugin/plugin.json" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+path.write_text(text.replace('"version": "6.0.3"', '"version": "\\ud800"'), encoding="utf-8")
+PY
+git -C "$upstream" add .codex-plugin/plugin.json
+git -C "$upstream" -c user.email=superpowers-wrapper@example.invalid -c user.name=superpowers-wrapper -c commit.gpgsign=false commit -m "unencodable manifest version" >/dev/null
+git -C "$upstream" checkout main >/dev/null
+
+git -C "$upstream" checkout -b deeply-nested-json >/dev/null
+python3 - "$upstream/.codex-plugin/plugin.json" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+nested = "[" * 2000 + "0" + "]" * 2000
+path.write_text(text.replace('"preserved": true', f'"preserved": {nested}'), encoding="utf-8")
+PY
+git -C "$upstream" add .codex-plugin/plugin.json
+git -C "$upstream" -c user.email=superpowers-wrapper@example.invalid -c user.name=superpowers-wrapper -c commit.gpgsign=false commit -m "deeply nested manifest JSON" >/dev/null
+git -C "$upstream" checkout main >/dev/null
+
 git -C "$upstream" checkout -b feature/foo >/dev/null
 printf 'feature data\n' > "$upstream/skills/brainstorming/feature.txt"
 git -C "$upstream" add skills/brainstorming/feature.txt
@@ -193,6 +239,33 @@ assert_bad_manifest_error() {
   fi
 }
 
+assert_rejected_manifest_input() {
+  ref="$1"
+  destination="$2"
+  expected="$3"
+  err="$tmpdir/$destination.err"
+  if SUPERPOWERS_REF="$ref" \
+    SUPERPOWERS_UPSTREAM_URL="$upstream" \
+    SUPERPOWERS_CACHE_DIR="$tmpdir/cache-$destination" \
+    SUPERPOWERS_PLUGIN_ROOT="$tmpdir/$destination" \
+    SUPERPOWERS_VALIDATOR= \
+    HOME="$home" \
+    sh "$root/scripts/prepare" >"$tmpdir/$destination.out" 2>"$err"; then
+    echo "prepare unexpectedly accepted invalid manifest input: $ref" >&2
+    exit 1
+  fi
+  if ! grep -Fq "$expected" "$err"; then
+    echo "manifest input error did not contain expected diagnostic: $expected" >&2
+    cat "$err" >&2
+    exit 1
+  fi
+  if grep -q 'Traceback' "$err"; then
+    echo "manifest input error must not include a Python traceback" >&2
+    cat "$err" >&2
+    exit 1
+  fi
+}
+
 assert_prepare_version() {
   destination="$1"
   expected="$2"
@@ -272,6 +345,25 @@ assert_prepare_commit "out-raw" "$feature_commit"
 assert_prepare_version "out-raw" "0.0.0+wrapper.$feature_short"
 
 assert_bad_manifest_error "out-bad-manifest"
+assert_rejected_manifest_input "nonstandard-json" "out-nonstandard-json" "invalid JSON in"
+assert_rejected_manifest_input "unreadable-manifest" "out-unreadable-manifest" "cannot read JSON in"
+assert_rejected_manifest_input "unencodable-manifest-version" "out-unencodable-version" "cannot output JSON value from"
+assert_rejected_manifest_input "deeply-nested-json" "out-deeply-nested" "JSON nesting exceeds limit in"
+
+unreadable_json="$tmpdir/json-directory"
+mkdir "$unreadable_json"
+printf 'sentinel\n' > "$unreadable_json/sentinel"
+if ( . "$root/scripts/lib.sh"; spw_json_get "$unreadable_json" version ) \
+  >"$tmpdir/unreadable-json.out" 2>"$tmpdir/unreadable-json.err"; then
+  echo "JSON helper unexpectedly accepted an unreadable file" >&2
+  exit 1
+fi
+grep -Fq "cannot read JSON in $unreadable_json" "$tmpdir/unreadable-json.err"
+if grep -q 'Traceback' "$tmpdir/unreadable-json.err"; then
+  echo "unreadable JSON error must not include a Python traceback" >&2
+  cat "$tmpdir/unreadable-json.err" >&2
+  exit 1
+fi
 
 output="$tmpdir/out-latest"
 metadata="$output/.superpowers-upstream.json"

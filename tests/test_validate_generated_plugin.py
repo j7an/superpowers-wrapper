@@ -3,11 +3,13 @@ from __future__ import annotations
 
 import json
 import os
+import runpy
 import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 from typing import Any
 
@@ -132,6 +134,54 @@ class ValidatorTests(unittest.TestCase):
                 self.write_manifest(manifest)
                 result = self.run_validator()
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_semver_rejects_unicode_digits(self) -> None:
+        for version in ("1.1١.0", "1.0.0-١"):
+            with self.subTest(version=version):
+                self.reset_candidate()
+                self.expected["manifest_version"] = version
+                manifest = self.read_manifest()
+                manifest["version"] = version
+                self.write_manifest(manifest)
+                self.assert_rejected("field `version` must be SemVer 2.0.0")
+
+    def test_json_rejects_nonstandard_numeric_constants(self) -> None:
+        manifest_path = self.plugin / ".codex-plugin" / "plugin.json"
+        manifest_path.write_text(
+            '{"name":"superpowers","version":"6.1.1+wrapper.d884ae0",'
+            '"description":"Generated Superpowers","skills":"./skills/",'
+            '"x_future_manifest":NaN}\n',
+            encoding="utf-8",
+        )
+        self.assert_rejected("plugin manifest must contain valid JSON")
+
+        self.reset_candidate()
+        metadata_path = self.plugin / ".superpowers-upstream.json"
+        metadata_path.write_text(
+            '{"source":"https://example.invalid/superpowers.git",'
+            '"requested_ref":"latest-release","resolved_ref":"v6.1.1",'
+            f'"commit":"{COMMIT}","upstream_manifest_version":Infinity}}\n',
+            encoding="utf-8",
+        )
+        self.assert_rejected("provenance must contain valid JSON")
+
+    def test_json_rejects_excessive_nesting_without_traceback(self) -> None:
+        nested = "[" * 2000 + "0" + "]" * 2000
+        manifest_path = self.plugin / ".codex-plugin" / "plugin.json"
+        manifest_path.write_text(
+            '{"name":"superpowers","version":"6.1.1+wrapper.d884ae0",'
+            '"description":"Generated Superpowers","skills":"./skills/",'
+            f'"x_future_manifest":{nested}}}\n',
+            encoding="utf-8",
+        )
+        self.assert_rejected("plugin manifest exceeds maximum JSON nesting")
+
+    def test_skill_enumeration_oserror_is_reported_deterministically(self) -> None:
+        validate_tree = runpy.run_path(str(VALIDATOR))["validate_tree"]
+        errors: list[str] = []
+        with mock.patch.object(Path, "iterdir", side_effect=OSError("fixture error")):
+            validate_tree(self.plugin, errors)
+        self.assertIn("skills directory could not be enumerated", errors)
 
     def test_manifest_json_shape_and_owned_fields_fail_closed(self) -> None:
         manifest_path = self.plugin / ".codex-plugin" / "plugin.json"

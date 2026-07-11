@@ -13,13 +13,14 @@ from typing import Any, Sequence
 
 
 SEMVER_RE = re.compile(
-    r"^(0|[1-9]\d*)\."
-    r"(0|[1-9]\d*)\."
-    r"(0|[1-9]\d*)"
-    r"(?:-(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)"
-    r"(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*)?"
+    r"^(0|[1-9][0-9]*)\."
+    r"(0|[1-9][0-9]*)\."
+    r"(0|[1-9][0-9]*)"
+    r"(?:-(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)"
+    r"(?:\.(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?"
     r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$"
 )
+MAX_JSON_NESTING = 256
 PROVENANCE_KEYS = {
     "source",
     "requested_ref",
@@ -27,6 +28,27 @@ PROVENANCE_KEYS = {
     "commit",
     "upstream_manifest_version",
 }
+
+
+def reject_json_constant(constant: str) -> None:
+    raise ValueError(f"non-standard numeric constant: {constant}")
+
+
+def json_nesting_exceeds_limit(value: Any) -> bool:
+    stack = [(value, 0)]
+    while stack:
+        current, depth = stack.pop()
+        if isinstance(current, dict):
+            next_depth = depth + 1
+            if next_depth > MAX_JSON_NESTING:
+                return True
+            stack.extend((child, next_depth) for child in current.values())
+        elif isinstance(current, list):
+            next_depth = depth + 1
+            if next_depth > MAX_JSON_NESTING:
+                return True
+            stack.extend((child, next_depth) for child in current)
+    return False
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -50,9 +72,15 @@ def load_json_object(path: Path, label: str, errors: list[str]) -> dict[str, Any
         errors.append(f"{label} is unreadable UTF-8")
         return None
     try:
-        value = json.loads(text)
-    except json.JSONDecodeError:
+        value = json.loads(text, parse_constant=reject_json_constant)
+    except RecursionError:
+        errors.append(f"{label} exceeds maximum JSON nesting")
+        return None
+    except (json.JSONDecodeError, ValueError):
         errors.append(f"{label} must contain valid JSON")
+        return None
+    if json_nesting_exceeds_limit(value):
+        errors.append(f"{label} exceeds maximum JSON nesting")
         return None
     if not isinstance(value, dict):
         errors.append(f"{label} must contain a JSON object")
@@ -75,17 +103,24 @@ def validate_local_path(
     if raw_path.is_absolute():
         errors.append(f"{label} must be a relative path")
         return
-    root = plugin_root.resolve()
-    target = (root / raw_path).resolve(strict=False)
+    try:
+        root = plugin_root.resolve()
+        target = (root / raw_path).resolve(strict=False)
+    except (OSError, RuntimeError, ValueError):
+        errors.append(f"{label} could not be resolved")
+        return
     try:
         target.relative_to(root)
     except ValueError:
         errors.append(f"{label} escapes the plugin root")
         return
-    if not target.exists():
-        errors.append(f"{label} target `{raw_value}` does not exist")
-    elif require_directory and not target.is_dir():
-        errors.append(f"{label} target `{raw_value}` must be a directory")
+    try:
+        if not target.exists():
+            errors.append(f"{label} target `{raw_value}` does not exist")
+        elif require_directory and not target.is_dir():
+            errors.append(f"{label} target `{raw_value}` must be a directory")
+    except OSError:
+        errors.append(f"{label} target `{raw_value}` could not be inspected")
 
 
 def validate_manifest(plugin_root: Path, expected_version: str, errors: list[str]) -> None:
@@ -207,11 +242,15 @@ def validate_tree(plugin_root: Path, errors: list[str]) -> None:
     if not skills_root.is_dir():
         errors.append("missing required directory `skills/`")
         return
-    skill_dirs = sorted(
-        path
-        for path in skills_root.iterdir()
-        if not path.name.startswith(".") and path.is_dir()
-    )
+    try:
+        skill_dirs = sorted(
+            path
+            for path in skills_root.iterdir()
+            if not path.name.startswith(".") and path.is_dir()
+        )
+    except OSError:
+        errors.append("skills directory could not be enumerated")
+        return
     if not skill_dirs:
         errors.append("`skills/` must contain at least one skill directory")
         return
@@ -247,8 +286,12 @@ def validate_provenance(args: argparse.Namespace, plugin_root: Path, errors: lis
 
 
 def validate(args: argparse.Namespace) -> list[str]:
-    plugin_root = Path(args.plugin_root).expanduser().resolve()
     errors: list[str] = []
+    try:
+        plugin_root = Path(args.plugin_root).expanduser().resolve()
+    except (OSError, RuntimeError, ValueError):
+        errors.append("plugin root could not be resolved")
+        return errors
     validate_manifest(plugin_root, args.manifest_version, errors)
     validate_tree(plugin_root, errors)
     validate_provenance(args, plugin_root, errors)
@@ -263,7 +306,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         for error in errors:
             print(f"- {error}", file=sys.stderr)
         return 1
-    print(f"generated plugin validation passed: {Path(args.plugin_root).resolve()}")
+    print(f"generated plugin validation passed: {args.plugin_root}")
     return 0
 
 
