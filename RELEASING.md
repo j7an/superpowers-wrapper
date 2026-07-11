@@ -10,14 +10,18 @@ one-time bootstrap below.
 
 ## Normal release
 
-1. Ensure `main` is green (`sh tests/run.sh`) and every commit since the last
-   tag has a Conventional Commits prefix matching its user-visible intent.
+1. Ensure `main` is green (`sh tests/run.sh`) and review every commit since
+   the last tag for a Conventional Commits prefix matching its user-visible
+   intent. This repo's feature-commit hygiene keeps `bump=auto` inference
+   reliable; it is not a claim that the reusable workflow enforces every
+   prefix universally.
 2. Confirm release-bot prerequisites are present: repo variable
    `RELEASE_BOT_APP_ID`, repo secret `RELEASE_BOT_PRIVATE_KEY`, and the
    `release` environment gate used by the shared tag-release workflow.
 3. Dispatch **Tag Release** on `main` with `bump=auto|patch|minor|major`.
    The workflow bumps `package.json.version` via `.version-bump.json` and
-   creates the signed `vX.Y.Z` tag.
+   creates a lightweight `vX.Y.Z` tag pointing at the verified release-bot
+   bump commit.
 4. The publish workflow gates (tag is ancestor of main; tag tail ==
    package.json version), runs the test suite, packs once, asserts tarball
    contents, publishes the verified tarball, polls the registry, runs an
