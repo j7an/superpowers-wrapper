@@ -13,6 +13,19 @@ builtin_validator="$root/scripts/validate-generated-plugin.py"
 additional_validator="${SUPERPOWERS_VALIDATOR:-}"
 tmp_parent=$(dirname "$plugin_root")
 tmp_plugin="$tmp_parent/.superpowers.tmp.$$"
+
+cleanup_tmp_plugin() {
+  status=$?
+  trap - 0 HUP INT TERM
+  rm -rf "$tmp_plugin" || :
+  exit "$status"
+}
+
+trap cleanup_tmp_plugin 0
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
 requested_ref=$(spw_config_ref "$root")
 
 spw_require_command git
