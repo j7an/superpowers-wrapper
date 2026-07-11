@@ -422,11 +422,17 @@ items = data.get("marketplaces")
 if not isinstance(items, list):
     sys.exit(2)
 for item in items:
-    if isinstance(item, dict) and item.get("name") == name:
-        root = item.get("root")
-        if not isinstance(root, str) or not root:
-            sys.exit(2)
-        print(root)
+    if not isinstance(item, dict):
+        sys.exit(2)
+    item_name = item.get("name")
+    item_root = item.get("root")
+    if not isinstance(item_name, str) or not item_name:
+        sys.exit(2)
+    if not isinstance(item_root, str) or not item_root:
+        sys.exit(2)
+for item in items:
+    if item["name"] == name:
+        print(item["root"])
         sys.exit(0)
 PY
 }
@@ -519,5 +525,6 @@ spw_verify_refresh() {
     echo "hint: retry with SUPERPOWERS_INSTALL_REFRESH_MODE=remove-add" >&2
     exit 1
   fi
-  echo "warning: installed wrapper not detectable, cannot confirm refresh; verify with 'codex plugin list --json'." >&2
+  echo "error: installed wrapper not detectable, cannot confirm refresh; verify with 'codex plugin list --json'." >&2
+  return 1
 }

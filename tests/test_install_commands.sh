@@ -193,6 +193,9 @@ grep -Fq "wrapper updated" "$state/out"
 if grep -Fq "marketplace remove" "$log"; then
   echo "fresh install must not remove any marketplace" >&2; exit 1
 fi
+if grep -Fq "plugin remove superpowers@superpowers-wrapper" "$log"; then
+  echo "add-only fresh install must not remove the wrapper plugin" >&2; exit 1
+fi
 if grep -Fq "openai-curated" "$log"; then
   echo "install must never name openai-curated" >&2; exit 1
 fi
@@ -209,6 +212,9 @@ if grep -Fq "marketplace add" "$log" || grep -Fq "marketplace remove" "$log"; th
   echo "same-root install must not re-register the marketplace" >&2; cat "$log" >&2; exit 1
 fi
 grep -Fq "plugin add superpowers@superpowers-wrapper" "$log"
+if grep -Fq "plugin remove superpowers@superpowers-wrapper" "$log"; then
+  echo "add-only same-root install must not remove the wrapper plugin" >&2; exit 1
+fi
 
 # ---------------------------------------------------------------------------
 # Scenario 3: registered at a different root -> remove then add, in order.
@@ -223,6 +229,9 @@ pa_line=$(line_of "plugin add superpowers@superpowers-wrapper")
   echo "order must be: marketplace remove, marketplace add, plugin add" >&2; cat "$log" >&2; exit 1; }
 if grep -Fq "marketplace remove openai-curated" "$log"; then
   echo "must only ever remove the wrapper marketplace" >&2; exit 1
+fi
+if grep -Fq "plugin remove superpowers@superpowers-wrapper" "$log"; then
+  echo "add-only drift reconciliation must not remove the wrapper plugin" >&2; exit 1
 fi
 
 # ---------------------------------------------------------------------------
@@ -252,13 +261,16 @@ if grep -Eq "marketplace (add|remove)|^plugin (add|remove)" "$log"; then
 fi
 
 # ---------------------------------------------------------------------------
-# Scenario 6: plugin add refreshes nothing -> unverifiable warning, exit 0.
+# Scenario 6: plugin add refreshes nothing -> verification fails, no success.
 # ---------------------------------------------------------------------------
 reset
 printf '%s\n' "$marketplace_absent" > "$state/marketplace_list.json"
 : > "$state/plugin_add_noop"
-run_install > "$state/out" 2>&1
+expect_fail
 grep -Fq "installed wrapper not detectable" "$state/out"
+if grep -Fq "wrapper updated" "$state/out"; then
+  echo "must not print success when the installed wrapper is undetectable" >&2; exit 1
+fi
 
 # ---------------------------------------------------------------------------
 # Scenario 7: installed fingerprint stays stale -> install fails, no success.
@@ -279,9 +291,15 @@ fi
 reset
 printf '%s\n' "$marketplace_absent" > "$state/marketplace_list.json"
 run_install SUPERPOWERS_INSTALL_REFRESH_MODE=remove-add > "$state/out"
+list_line=$(line_of "plugin marketplace list")
+add_line=$(line_of "plugin marketplace add $pkg")
 rm_line=$(line_of "plugin remove superpowers@superpowers-wrapper")
 pa_line=$(line_of "plugin add superpowers@superpowers-wrapper")
-[ "$rm_line" -lt "$pa_line" ] || { echo "plugin remove must precede plugin add" >&2; exit 1; }
+{ [ "$list_line" -lt "$add_line" ] && [ "$add_line" -lt "$rm_line" ] && [ "$rm_line" -lt "$pa_line" ]; } || {
+  echo "remove-add order must be: marketplace reconcile, plugin remove, plugin add" >&2
+  cat "$log" >&2
+  exit 1
+}
 if grep -Fq "openai-curated" "$log"; then
   echo "remove-add mode must not touch openai-curated" >&2; exit 1
 fi

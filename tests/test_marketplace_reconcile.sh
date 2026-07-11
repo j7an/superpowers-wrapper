@@ -23,6 +23,22 @@ fi
 if spw_marketplace_root_from_json '{"marketplaces":[{"name":"superpowers-wrapper","root":""}]}' superpowers-wrapper >/dev/null 2>&1; then
   echo "empty root must fail closed" >&2; exit 1
 fi
+for invalid_item_json in \
+  '{"marketplaces":["openai-curated"]}' \
+  '{"marketplaces":[{"root":"/x"}]}' \
+  '{"marketplaces":[{"marketplaceName":"openai-curated","root":"/x"}]}' \
+  '{"marketplaces":[{"name":"openai-curated"}]}' \
+  '{"marketplaces":[{"name":"openai-curated","root":17}]}'
+do
+  set +e
+  spw_marketplace_root_from_json "$invalid_item_json" superpowers-wrapper >/dev/null 2>&1
+  status=$?
+  set -e
+  [ "$status" -eq 2 ] || {
+    echo "malformed marketplace item must exit 2: $invalid_item_json (got $status)" >&2
+    exit 1
+  }
+done
 
 # --- spw_paths_equal: symlinked roots are the same physical location.
 # This is the portable equivalent of macOS /var vs /private/var. ---
@@ -109,6 +125,17 @@ FAKE_CODEX_LIST_OUTPUT='{"unexpected":[]}'
 assert_reconcile_fails_without_mutation schema-invalid-json
 FAKE_CODEX_LIST_OUTPUT='{"marketplaces":[{"name":"superpowers-wrapper","root":""}]}'
 assert_reconcile_fails_without_mutation empty-root-json
+for invalid_item_case in \
+  'non-object-item|{"marketplaces":["openai-curated"]}' \
+  'missing-name|{"marketplaces":[{"root":"/other"}]}' \
+  'renamed-name|{"marketplaces":[{"marketplaceName":"openai-curated","root":"/other"}]}' \
+  'missing-root|{"marketplaces":[{"name":"openai-curated"}]}' \
+  'invalid-root|{"marketplaces":[{"name":"openai-curated","root":17}]}'
+do
+  label=${invalid_item_case%%|*}
+  FAKE_CODEX_LIST_OUTPUT=${invalid_item_case#*|}
+  assert_reconcile_fails_without_mutation "$label"
+done
 
 FAKE_CODEX_LIST_OUTPUT='{"marketplaces":[{"name":"openai-curated","root":"/other"}]}'
 : > "$fake_log"
@@ -168,7 +195,12 @@ fi
 grep -Fq "still stale" "$tmpdir/stale.out"
 
 rm -rf "$tmpdir/codex"
-out=$(SUPERPOWERS_INSTALLED_SEARCH_ROOT="$tmpdir/codex" spw_verify_refresh "$desired" 2>&1)
-printf '%s\n' "$out" | grep -Fq "installed wrapper not detectable"
+if (SUPERPOWERS_INSTALLED_SEARCH_ROOT="$tmpdir/codex" spw_verify_refresh "$desired") >"$tmpdir/undetectable.out" 2>&1; then
+  echo "undetectable installed metadata must fail" >&2; exit 1
+fi
+grep -Fq "installed wrapper not detectable" "$tmpdir/undetectable.out"
+if grep -Fq "wrapper updated" "$tmpdir/undetectable.out"; then
+  echo "undetectable installed metadata must not print success" >&2; exit 1
+fi
 
 echo "test_marketplace_reconcile: OK"
