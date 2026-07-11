@@ -49,14 +49,25 @@ and never falsely reports success.
 - Stamps the generated manifest with a ref-aware wrapper version ending in
   `+wrapper.<short-sha>` and writes the upstream provenance to
   `.superpowers-upstream.json`.
-- Validates the generated tree with Codex's plugin validator before swapping it
-  into place (a failed run never destroys a previously-generated tree).
+- Validates the generated tree with the wrapper's shipped, Python-standard-library
+  contract validator before swapping it into place (a failed run never destroys
+  a previously generated tree).
 - Registers the local marketplace and installs/refreshes the plugin in Codex.
 
 ## Requirements
 
 - `git`, `python3`, and a POSIX `sh`.
 - The `codex` CLI (only for `install`/`update`/`uninstall`; `prepare`/`probe` don't need it).
+
+Validation checks the wrapper-owned manifest overlay, generated-tree structure,
+skill frontmatter envelope, known local paths, and provenance. It deliberately
+does not implement a general YAML parser or mirror every Codex ingestion rule;
+upstream owns skill semantics and Codex owns its evolving schema.
+
+`SUPERPOWERS_VALIDATOR=/path/to/validator.py` adds an optional Python validator
+after the built-in check. It receives the candidate plugin root as its only
+argument. It cannot replace or bypass built-in validation, and either check
+failing prevents the tree swap and all Codex mutation.
 
 ## Quick start
 
@@ -81,10 +92,10 @@ scripts/install
 > ```
 
 After installation, the wrapper delivers upstream **skills**. Upstream's
-`hooks/` directory is not copied into the generated plugin: Codex's plugin
-validator rejects a `hooks` field in the manifest, and shipping no
-`hooks/hooks.json` means Codex's hook auto-discovery has nothing to register —
-so upstream's session-start auto-registration concern doesn't apply here.
+`hooks/` directory is not copied into the generated plugin, and the wrapper's
+generated-tree contract requires both no manifest `hooks` key and no physical
+`hooks/` directory. This preserves the wrapper's current hook-free policy; a
+future hook-policy change requires its own design and compatibility evidence.
 
 ## Scripts
 
@@ -170,9 +181,9 @@ SUPERPOWERS_REF=latest-release scripts/probe
   Codex manifest. It carries the placeholder version
   `0.0.0+wrapper.template`.
 - **Wrapper overlay:** `prepare` replaces the version with a ref-aware wrapper
-  version, forces `skills` to `./skills/`, and removes manifest fields Codex's
-  plugin validator rejects. Today that means the generated plugin is hook-free:
-  no manifest `hooks` key and no copied `hooks/` directory.
+  version, forces `skills` to `./skills/`, and enforces the wrapper's current
+  hook-free policy: no manifest `hooks` key and no copied `hooks/` directory.
+  Unknown upstream manifest fields remain preserved.
 - Stable tags generate release-looking versions such as
   `6.0.3+wrapper.896224c`; explicit prerelease tags generate versions such as
   `6.1.0-beta.1+wrapper.abc1234`.

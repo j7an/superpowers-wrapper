@@ -14,3 +14,4 @@ scripts/prepare
 scripts/probe
 scripts/uninstall
 scripts/update
+scripts/validate-generated-plugin.py
