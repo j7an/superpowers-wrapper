@@ -430,18 +430,34 @@ grep -Fq "additional plugin validator not found" "$tmpdir/missing-additional.out
 : > "$validator_log"
 cp -R "$tmpdir/out-latest" "$tmpdir/out-invalid-skill"
 printf 'preserve me\n' > "$tmpdir/out-invalid-skill/preexisting-sentinel"
+unrelated_tmp="$tmpdir/.superpowers.tmp.unrelated"
+prepare_pid_file="$tmpdir/invalid-skill.pid"
+mkdir -p "$unrelated_tmp"
+printf 'leave me\n' > "$unrelated_tmp/sentinel"
 if SUPERPOWERS_REF="invalid-skill" \
   SUPERPOWERS_UPSTREAM_URL="$upstream" \
   SUPERPOWERS_CACHE_DIR="$tmpdir/cache-invalid-skill" \
   SUPERPOWERS_PLUGIN_ROOT="$tmpdir/out-invalid-skill" \
   SUPERPOWERS_VALIDATOR="$additional_validator" \
   SUPERPOWERS_FAKE_VALIDATOR_LOG="$validator_log" \
+  PREPARE_PID_FILE="$prepare_pid_file" \
   HOME="$home" \
-  sh "$root/scripts/prepare" >"$tmpdir/invalid-skill.out" 2>"$tmpdir/invalid-skill.err"; then
+  sh -c 'printf "%s\n" "$$" > "$PREPARE_PID_FILE"; exec sh "$1"' \
+    sh "$root/scripts/prepare" \
+    >"$tmpdir/invalid-skill.out" 2>"$tmpdir/invalid-skill.err"; then
   echo "prepare unexpectedly accepted invalid skill frontmatter" >&2
   exit 1
 fi
 grep -Fq "exactly one top-level \`description:\`" "$tmpdir/invalid-skill.err"
+prepare_pid=$(cat "$prepare_pid_file")
+[ ! -e "$tmpdir/.superpowers.tmp.$prepare_pid" ] || {
+  echo "built-in failure must remove its staged plugin tree" >&2
+  exit 1
+}
+[ -f "$unrelated_tmp/sentinel" ] || {
+  echo "built-in failure must not remove another invocation's staged tree" >&2
+  exit 1
+}
 [ ! -s "$validator_log" ] || {
   echo "additional validator must not run after built-in failure" >&2
   exit 1
