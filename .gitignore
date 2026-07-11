@@ -1,4 +1,8 @@
-.cache/upstream/
+.cache/
+.worktrees/
+.superpowers/
+.claude/worktrees/
+plugins/.superpowers.tmp.*/
 plugins/superpowers/assets/
 plugins/superpowers/hooks/
 plugins/superpowers/skills/
