@@ -48,19 +48,63 @@ one-time bootstrap below.
 
 ## First-publish bootstrap (one time)
 
-npm documents no pending-publisher flow for unclaimed names (verified
-2026-07-01; re-check https://docs.npmjs.com/trusted-publishers in case one
-was added). Therefore:
+npm trusted-publisher configuration lives in an existing package's settings
+(verified 2026-07-11; re-check https://docs.npmjs.com/trusted-publishers before
+publishing in case npm adds a pending-publisher flow). Therefore, claim the
+unscoped package with the intended first version before creating the first
+release tag. Do **not** dispatch **Tag Release** until the manual publish and
+trusted-publisher configuration below are complete.
 
-1. Use **Tag Release** to create the initial release-bot bump commit and
-   `vX.Y.Z` tag. The tag-triggered publish run may fail or be cancelled before
-   npm trusted publishing is configured; that is expected for the first
-   publish only.
-2. From the release tag, pack and verify locally
-   (`npm pack --json > pack.json && sh tests/assert_pack_contents.sh pack.json`),
-   then publish manually with the 2FA-protected npm account:
-   `npm publish superpowers-wrapper-X.Y.Z.tgz --access public`.
-3. In the package's npmjs.com settings, configure the trusted publisher:
+1. Create a temporary clean checkout of merged `main`. In that checkout only,
+   stage the version that `bump=minor` will create, without committing or
+   tagging it:
+
+   ```sh
+   repo_root=$(git rev-parse --show-toplevel)
+   git -C "$repo_root" fetch --tags origin \
+     'refs/heads/main:refs/remotes/origin/main'
+   test -z "$(git -C "$repo_root" tag --list 'v*')"
+   bootstrap_commit=$(git -C "$repo_root" rev-parse origin/main)
+   bootstrap_root=$(mktemp -d)
+   git -C "$repo_root" worktree add --detach \
+     "$bootstrap_root/repo" "$bootstrap_commit"
+   cd "$bootstrap_root/repo"
+   test "$(node -p 'require("./package.json").version')" = "0.0.0"
+   npm version 0.1.0 --no-git-tag-version --allow-same-version
+   test "$(node -p 'require("./package.json").version')" = "0.1.0"
+   test "$(git diff --name-only)" = "package.json"
+   ```
+
+   `.version-bump.json` changes only `package.json`, so this produces the same
+   package contents as the later release-bot bump commit. Committed `main`
+   remains at `0.0.0` throughout this manual bootstrap. Treat
+   `$bootstrap_commit` as a freeze point: do not merge to `main` until the
+   initial `Tag Release` run succeeds.
+2. Test, pack, assert the exact tarball contents, and publish the staged
+   `0.1.0` artifact with the 2FA-protected npm account:
+
+   ```sh
+   sh tests/run.sh
+   npm pack --json > pack.json
+   sh tests/assert_pack_contents.sh pack.json
+   test "$(node -p 'require("./pack.json")[0].filename')" = \
+     "superpowers-wrapper-0.1.0.tgz"
+   npm publish superpowers-wrapper-0.1.0.tgz --access public
+   ```
+
+3. Verify the initial registry package before configuring automation:
+
+   ```sh
+   test "$(npm view superpowers-wrapper@0.1.0 version)" = "0.1.0"
+   test "$(npx --yes superpowers-wrapper@0.1.0 --version)" = "0.1.0"
+   ```
+
+   Registry propagation can lag behind a successful publish. If either check
+   fails immediately afterward, retry both checks for up to 10 minutes before
+   treating the publish as failed; the reusable workflow similarly retries
+   registry visibility for about 7.5 minutes.
+
+4. In the package's npmjs.com settings, configure the trusted publisher:
    - Repository: `j7an/superpowers-wrapper`
    - Workflow filename: `release.yml` (the CALLER workflow in this repo —
      validation checks the calling workflow, not the reusable one)
@@ -68,10 +112,28 @@ was added). Therefore:
    - **Allowed actions: `npm publish` only** (not `npm stage publish`).
      Required for configurations created after May 20, 2026; this flow does
      no staged publishing.
-4. Re-run the original tag-triggered **Release** workflow after configuring
-   the trusted publisher. The pinned v4.2.2 reusable workflow sees that
-   `superpowers-wrapper@X.Y.Z` already exists, skips the duplicate publish,
-   performs registry and npx verification, and creates or updates the GitHub
-   Release with the verified tarball attached.
-5. Revoke any granular npm token afterward. All subsequent releases go
+5. Discard only the scoped temporary checkout, then confirm remote `main` is
+   still the frozen commit and no release tag has appeared:
+
+   ```sh
+   cd "$repo_root"
+   git worktree remove --force "$bootstrap_root/repo"
+   rmdir "$bootstrap_root"
+   git fetch --tags origin 'refs/heads/main:refs/remotes/origin/main'
+   test "$(git rev-parse origin/main)" = "$bootstrap_commit"
+   test -z "$(git tag --list 'v*')"
+   ```
+   If either freeze check fails, stop and adjudicate the immutable published
+   artifact against the changed repository state; do not dispatch a release.
+6. Dispatch **Tag Release** on `main` with `bump=minor`. The explicit bump
+   guarantees the tag version matches the already-published artifact. It
+   creates the signed
+   release-bot `0.1.0` bump commit and lightweight `v0.1.0` tag. Approve the
+   `release` and `npm` environment gates when prompted.
+7. Confirm the tag-triggered **Release** workflow succeeds. The pinned v4.2.2
+   reusable workflow sees that `superpowers-wrapper@0.1.0` already exists,
+   skips duplicate publication, performs registry and npx verification, and
+   creates the GitHub Release with its verified tarball attached.
+8. Revoke any temporary granular npm token after the OIDC workflow succeeds.
+   All subsequent releases go
    through Tag Release followed by the tag-triggered OIDC publish flow only.
