@@ -1,6 +1,6 @@
 {
   "name": "superpowers-wrapper",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Stateless npx wrapper that repackages upstream Superpowers as a local Codex plugin marketplace",
   "license": "MIT",
   "repository": {
