@@ -2,7 +2,12 @@
 set -eu
 
 root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
-. "$root/scripts/lib.sh"
+. "$root/scripts/core/common.sh"
+. "$root/scripts/core/provenance.sh"
+. "$root/scripts/core/status.sh"
+. "$root/scripts/core/lifecycle.sh"
+. "$root/scripts/core/adapter.sh"
+. "$root/scripts/adapters/codex/lib.sh"
 tmpdir=$(mktemp -d)
 trap 'rm -rf "$tmpdir"' EXIT INT TERM
 

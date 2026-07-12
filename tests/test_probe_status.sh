@@ -36,7 +36,7 @@ assert_manifest_short() {
   "version": "$version"
 }
 JSON
-  actual=$( . "$root/scripts/lib.sh"; spw_manifest_short_sha_or_empty "$tmpdir/plugin/.codex-plugin/plugin.json")
+  actual=$( . "$root/scripts/adapters/codex/lib.sh"; spw_manifest_short_sha_or_empty "$tmpdir/plugin/.codex-plugin/plugin.json")
   if [ "$actual" != "$expected" ]; then
     echo "unexpected manifest short sha for $version: $actual (expected $expected)" >&2
     exit 1

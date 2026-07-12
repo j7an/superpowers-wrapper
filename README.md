@@ -232,7 +232,10 @@ plugins/superpowers/
   .codex-plugin/plugin.json                # generated manifest          (gitignored)
   skills/ assets/ LICENSE ...              # generated from upstream      (gitignored)
   .superpowers-upstream.json               # generated provenance         (gitignored)
-scripts/                                   # prepare / probe / install / update + lib.sh
+scripts/
+  adapters/codex/                          # Codex adapter entrypoint + validator helpers
+  core/                                    # shared lifecycle/provenance/status modules
+  prepare probe install update uninstall   # user-facing shell entrypoints
 tests/                                     # hermetic suite + manual Codex probe
 .cache/upstream/                           # upstream clone cache         (gitignored)
 ```

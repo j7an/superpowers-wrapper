@@ -2,7 +2,11 @@
 set -eu
 
 root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
-. "$root/scripts/lib.sh"
+. "$root/scripts/core/common.sh"
+. "$root/scripts/core/upstream.sh"
+. "$root/scripts/core/provenance.sh"
+. "$root/scripts/core/lifecycle.sh"
+. "$root/scripts/core/adapter.sh"
 
 upstream_url="${SUPERPOWERS_UPSTREAM_URL:-$SPW_UPSTREAM_URL_DEFAULT}"
 cache_parent="${SUPERPOWERS_CACHE_DIR:-$root/.cache/upstream}"

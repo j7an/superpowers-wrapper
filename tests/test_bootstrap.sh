@@ -24,6 +24,9 @@ assert_file ".gitignore"
 assert_file "config/upstream-ref"
 assert_file ".agents/plugins/marketplace.json"
 assert_file "plugins/superpowers/.codex-plugin/plugin.template.json"
+assert_file "scripts/adapters/codex/adapter"
+assert_file "scripts/adapters/codex/validate-generated-plugin.py"
+assert_file "scripts/core/validate-adapter-response.py"
 
 assert_contains "config/upstream-ref" "latest-release"
 assert_contains ".agents/plugins/marketplace.json" '"name": "superpowers-wrapper"'

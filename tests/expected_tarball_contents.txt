@@ -18,7 +18,6 @@ scripts/core/lifecycle.sh
 scripts/core/provenance.sh
 scripts/core/status.sh
 scripts/core/upstream.sh
-scripts/lib.sh
 scripts/prepare
 scripts/probe
 scripts/uninstall
