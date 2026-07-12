@@ -24,7 +24,7 @@ command -v docker >/dev/null 2>&1 || {
   exit 1
 }
 
-docker build -f "$root/tests/container/Dockerfile" -t "$image" "$root"
+docker build --pull -f "$root/tests/container/Dockerfile" -t "$image" "$root"
 exec docker run --rm \
   --network none \
   --read-only \
