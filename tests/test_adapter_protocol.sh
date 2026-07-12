@@ -11,10 +11,24 @@ trap 'rm -rf "$tmpdir"' EXIT INT TERM
 
 SPW_ADAPTER="$root/tests/fixtures/fake-adapter"
 [ "$SPW_ADAPTER_RESPONSE_VALIDATOR" = "$root/scripts/core/validate-adapter-response.py" ]
+grep -Fxq 'from __future__ import annotations' "$SPW_ADAPTER_RESPONSE_VALIDATOR"
 
 system_python=/usr/bin/python3
 if [ -x "$system_python" ]; then
-  "$system_python" -S "$SPW_ADAPTER_RESPONSE_VALIDATOR" --help >/dev/null
+  system_python_version=$(
+    "$system_python" -S -c 'import sys; print("%d.%d" % sys.version_info[:2])'
+  )
+  if [ "$system_python_version" = "3.9" ]; then
+    "$system_python" -S -c '
+import runpy
+import sys
+
+assert sys.version_info[:2] == (3, 9)
+validator = sys.argv[1]
+sys.argv = [validator, "--help"]
+runpy.run_path(validator, run_name="__main__")
+' "$SPW_ADAPTER_RESPONSE_VALIDATOR" >/dev/null
+  fi
 fi
 
 run_adapter() {

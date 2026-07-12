@@ -10,6 +10,8 @@ moved="$root/market-b"
 plugin_id="wrapper-probe@superpowers-wrapper-probe"
 commit_a=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 commit_b=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+version_a=0.0.0+probe.aaaaaaa
+version_b=0.0.0+probe.bbbbbbb
 
 if command -v timeout >/dev/null 2>&1; then
   timeout_bin=$(command -v timeout)
@@ -85,41 +87,76 @@ raise SystemExit("wrapper probe marketplace does not point at the expected root"
 PY
 }
 
-assert_installed_commit() {
-  expected_commit="$1"
-  python3 - "$HOME/.codex" "$expected_commit" <<'PY'
+assert_plugin_listed() {
+  listing=$(run_codex plugin list --json)
+  python3 - "$listing" "$plugin_id" <<'PY'
+import json
+import sys
+
+listing, expected_plugin_id = sys.argv[1:]
+data = json.loads(listing)
+installed = data.get("installed")
+if not isinstance(installed, list):
+    raise SystemExit("Codex plugin listing does not contain an installed array")
+if not any(
+    isinstance(item, dict) and item.get("pluginId") == expected_plugin_id
+    for item in installed
+):
+    raise SystemExit("wrapper probe is not active in the Codex plugin listing")
+PY
+}
+
+install_plugin_and_assert_active() {
+  expected_version="$1"
+  expected_commit="$2"
+  unexpected_commit="$3"
+  expected_root="$HOME/.codex/plugins/cache/superpowers-wrapper-probe/wrapper-probe/$expected_version"
+
+  install_output=$(run_codex plugin add "$plugin_id")
+  printf '%s\n' "$install_output"
+  active_root=$(printf '%s\n' "$install_output" | sed -n 's/^Installed plugin root: //p')
+  if [ -z "$active_root" ] || [ "$(printf '%s\n' "$install_output" | grep -c '^Installed plugin root: ')" -ne 1 ]; then
+    echo "error: Codex did not report exactly one active installed plugin root" >&2
+    exit 1
+  fi
+
+  python3 - "$active_root" "$expected_root" "$expected_version" "$expected_commit" "$unexpected_commit" <<'PY'
 import json
 from pathlib import Path
 import sys
 
-search_root = Path(sys.argv[1])
-expected_commit = sys.argv[2]
-for path in search_root.rglob(".superpowers-upstream.json"):
-    if "wrapper-probe" not in path.parts:
-        continue
-    try:
-        with path.open(encoding="utf-8") as handle:
-            data = json.load(handle)
-    except (OSError, UnicodeError, json.JSONDecodeError, RecursionError, ValueError):
-        continue
-    if isinstance(data, dict) and data.get("commit") == expected_commit:
-        raise SystemExit(0)
-raise SystemExit("wrapper probe installed provenance does not match the expected commit")
+active_arg, expected_arg, expected_version, expected_commit, unexpected_commit = sys.argv[1:]
+active_root = Path(active_arg).resolve(strict=True)
+expected_root = Path(expected_arg).resolve(strict=True)
+if active_root != expected_root:
+    raise SystemExit(f"Codex selected unexpected installed plugin root: {active_root}")
+
+with (active_root / ".superpowers-upstream.json").open(encoding="utf-8") as handle:
+    provenance = json.load(handle)
+with (active_root / ".codex-plugin" / "plugin.json").open(encoding="utf-8") as handle:
+    manifest = json.load(handle)
+
+if not isinstance(provenance, dict) or provenance.get("commit") != expected_commit:
+    raise SystemExit("active installed provenance does not match the expected commit")
+if provenance.get("commit") == unexpected_commit:
+    raise SystemExit("Codex selected the stale installed provenance")
+if not isinstance(manifest, dict) or manifest.get("version") != expected_version:
+    raise SystemExit("active installed manifest version does not match its cache root")
 PY
+
+  assert_plugin_listed
 }
 
 write_market "$market" "$commit_a"
 run_codex plugin marketplace add "$market"
-run_codex plugin add "$plugin_id"
+install_plugin_and_assert_active "$version_a" "$commit_a" "$commit_b"
 assert_marketplace_root "$market"
-assert_installed_commit "$commit_a"
 
 write_market "$moved" "$commit_b"
 run_codex plugin marketplace remove superpowers-wrapper-probe
 run_codex plugin marketplace add "$moved"
-run_codex plugin add "$plugin_id"
+install_plugin_and_assert_active "$version_b" "$commit_b" "$commit_a"
 assert_marketplace_root "$moved"
-assert_installed_commit "$commit_b"
 
 run_codex plugin remove "$plugin_id"
 run_codex plugin marketplace remove superpowers-wrapper-probe

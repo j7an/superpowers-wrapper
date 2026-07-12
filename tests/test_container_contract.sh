@@ -34,8 +34,17 @@ probe = File.read(ARGV.fetch(0))
 commits = probe.scan(/^commit_([ab])=([0-9a-f]{40})$/).to_h
 raise "offline probe must define distinct A and B commits" unless commits.keys.sort == ["a", "b"] && commits["a"] != commits["b"]
 raise "offline probe Codex calls must use the timeout wrapper" if probe.match?(/^\s*codex\s+plugin\s+/)
+run_codex = probe.match(/^run_codex\(\) \{\n(?<body>.*?)^\}\n/m)
+raise "offline probe must define run_codex" unless run_codex
+run_codex_lines = run_codex[:body].lines.map(&:strip).reject(&:empty?)
+unless run_codex_lines == ['"$timeout_bin" 30 codex "$@"']
+  raise "run_codex must route through the selected timeout binary"
+end
 raise "offline probe must assert marketplace B registration" unless probe.include?('assert_marketplace_root "$moved"')
-raise "offline probe must assert installed B provenance" unless probe.include?('assert_installed_commit "$commit_b"')
+unless probe.include?('install_plugin_and_assert_active "$version_b" "$commit_b" "$commit_a"')
+  raise "offline probe must assert the CLI-selected B cache root and reject stale A provenance"
+end
+raise "offline probe must not accept provenance from an arbitrary cache path" if probe.include?("search_root.rglob")
 RUBY
 
 echo "test_container_contract: OK"
