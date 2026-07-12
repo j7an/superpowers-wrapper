@@ -41,6 +41,8 @@ assert_contains "config/upstream-ref" "latest-release"
 assert_contains ".agents/plugins/marketplace.json" '"name": "superpowers-wrapper"'
 assert_contains ".agents/plugins/marketplace.json" '"products": ["CODEX"]'
 assert_contains ".gitignore" "plugins/superpowers/.codex-plugin/plugin.json"
+assert_contains ".gitignore" "plugins/.superpowers.prepare.*/"
+assert_not_contains ".gitignore" "plugins/.superpowers.tmp.*/"
 assert_contains "plugins/superpowers/.codex-plugin/plugin.template.json" '"name": "superpowers"'
 assert_contains "plugins/superpowers/.codex-plugin/plugin.template.json" '"skills": "./skills/"'
 assert_contains "AGENTS.md" 'Run `sh tests/container.sh` before declaring a change complete.'

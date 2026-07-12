@@ -23,6 +23,7 @@ grep -Fq -- '--tmpfs /home/spw:rw,nosuid,size=128m,uid=10001,gid=10001' "$runner
 grep -Fq 'codex-spike)' "$runner"
 grep -Fxq '.superpowers/' "$root/.dockerignore"
 grep -Fxq '.worktrees/' "$root/.dockerignore"
+grep -Fxq 'plugins/.superpowers.prepare.*/' "$root/.dockerignore"
 
 ruby - "$runner" <<'RUBY'
 runner = File.read(ARGV.fetch(0))
