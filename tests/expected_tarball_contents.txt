@@ -8,6 +8,7 @@ bin/superpowers-wrapper.js
 config/upstream-ref
 package.json
 plugins/superpowers/.codex-plugin/plugin.template.json
+scripts/core/adapter.sh
 scripts/install
 scripts/core/common.sh
 scripts/core/provenance.sh
@@ -18,4 +19,5 @@ scripts/prepare
 scripts/probe
 scripts/uninstall
 scripts/update
+scripts/core/validate-adapter-response.py
 scripts/validate-generated-plugin.py
