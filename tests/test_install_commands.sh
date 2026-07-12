@@ -53,6 +53,7 @@ PY
 state="$tmpdir/state"
 mkdir -p "$state"
 fake_codex="$tmpdir/codex"
+fake_adapter="$tmpdir/adapter"
 log="$state/codex.log"
 cat > "$fake_codex" <<'EOF'
 #!/bin/sh
@@ -91,6 +92,7 @@ PY
   exit 0
 fi
 if [ "$1" = plugin ] && [ "$2" = add ]; then
+  [ -f "$state/plugin_add_fail" ] && exit 1
   [ -f "$state/plugin_add_noop" ] && exit 0
   dest="$state/codex-home/plugins/cache/superpowers-wrapper/superpowers/1.0.0"
   mkdir -p "$dest"
@@ -116,23 +118,264 @@ exit 0
 EOF
 chmod +x "$fake_codex"
 
+cat > "$fake_adapter" <<'EOF'
+#!/bin/sh
+set -eu
+
+state=$(CDPATH= cd -- "$(dirname "$0")" && pwd)/state
+operation="${1:-}"
+shift || true
+printf '%s' "$operation" >> "$state/adapter.log"
+if [ "$#" -gt 0 ]; then
+  printf ' %s' "$*" >> "$state/adapter.log"
+fi
+printf '\n' >> "$state/adapter.log"
+
+json_success() {
+  operation_name="$1"
+  mismatch_hint="${2:-}"
+  missing_hint="${3:-}"
+  python3 - "$operation_name" "$mismatch_hint" "$missing_hint" <<'PY'
+import json
+import sys
+
+operation, mismatch_hint, missing_hint = sys.argv[1:]
+if operation == "inspect":
+    fingerprint = None if missing_hint == "__null__" else missing_hint
+    result = {"view": "fingerprint", "fingerprint": fingerprint}
+else:
+    hints = {}
+    if mismatch_hint:
+        hints["mismatch"] = mismatch_hint
+    if missing_hint:
+        hints["missing"] = missing_hint
+    result = {"verification_hints": hints}
+json.dump(
+    {
+        "protocol": 1,
+        "operation": operation,
+        "ok": True,
+        "messages": [],
+        "result": result,
+        "error": None,
+    },
+    sys.stdout,
+    allow_nan=False,
+    separators=(",", ":"),
+)
+sys.stdout.write("\n")
+PY
+}
+
+json_failure() {
+  operation_name="$1"
+  code="$2"
+  message="$3"
+  hint_one="${4:-}"
+  hint_two="${5:-}"
+  python3 - "$operation_name" "$code" "$message" "$hint_one" "$hint_two" <<'PY'
+import json
+import sys
+
+operation, code, message, hint_one, hint_two = sys.argv[1:]
+hints = [hint for hint in (hint_one, hint_two) if hint]
+json.dump(
+    {
+        "protocol": 1,
+        "operation": operation,
+        "ok": False,
+        "messages": [],
+        "result": None,
+        "error": {"code": code, "message": message, "hints": hints},
+    },
+    sys.stdout,
+    allow_nan=False,
+    separators=(",", ":"),
+)
+sys.stdout.write("\n")
+PY
+  exit 1
+}
+
+marketplace_root_from_json() {
+  python3 - "$1" <<'PY'
+import json
+import sys
+
+raw = sys.argv[1]
+try:
+    data = json.loads(raw)
+except (json.JSONDecodeError, RecursionError):
+    raise SystemExit(2)
+items = data.get("marketplaces")
+if not isinstance(items, list):
+    raise SystemExit(2)
+for item in items:
+    if not isinstance(item, dict):
+        raise SystemExit(2)
+    if item.get("name") == "superpowers-wrapper":
+        root = item.get("root")
+        if not isinstance(root, str) or not root:
+            raise SystemExit(2)
+        print(root)
+        raise SystemExit(0)
+PY
+}
+
+paths_equal() {
+  python3 - "$1" "$2" <<'PY'
+import os
+import sys
+
+left, right = sys.argv[1:]
+print("same" if os.path.realpath(left) == os.path.realpath(right) else "different")
+PY
+}
+
+inspect_fingerprint() {
+  if [ -f "$state/adapter_inspect_missing" ]; then
+    json_success inspect "" "__null__"
+    return 0
+  fi
+  if [ -f "$state/adapter_inspect_stale" ]; then
+    json_success inspect "" "0000000000000000000000000000000000000000"
+    return 0
+  fi
+  if [ -f "$state/adapter_inspect_generated" ]; then
+    fingerprint=$(python3 - "$SPW_TEST_PKG_ROOT/plugins/superpowers/.superpowers-upstream.json" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    print(json.load(handle).get("commit", ""))
+PY
+)
+    json_success inspect "" "$fingerprint"
+    return 0
+  fi
+  installed_metadata=$(find "$state/codex-home" \
+    \( -path '*/superpowers/.superpowers-upstream.json' \
+       -o -path '*/superpowers/*/.superpowers-upstream.json' \) \
+    -type f 2>/dev/null | head -n 1 || true)
+  if [ -n "$installed_metadata" ]; then
+    fingerprint=$(python3 - "$installed_metadata" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    print(json.load(handle).get("commit", ""))
+PY
+)
+    json_success inspect "" "$fingerprint"
+    return 0
+  fi
+  json_success inspect "" "__null__"
+}
+
+adapter_install() {
+  [ "${1:-}" = "--package-root" ] || json_failure install invalid-arguments "missing required flag: --package-root"
+  [ "$#" -ge 2 ] || json_failure install invalid-arguments "missing value for --package-root"
+  package_root="$2"
+  codex_bin="${SUPERPOWERS_CODEX:-codex}"
+  refresh_mode="${SUPERPOWERS_INSTALL_REFRESH_MODE:-add-only}"
+  case "$refresh_mode" in
+    add-only|remove-add) ;;
+    *)
+      json_failure install invalid-arguments "unsupported SUPERPOWERS_INSTALL_REFRESH_MODE: $refresh_mode"
+      ;;
+  esac
+
+  if ! listing=$("$codex_bin" plugin marketplace list --json 2>/dev/null); then
+    json_failure install install-failed "cannot list Codex marketplaces"
+  fi
+  if ! registered_root=$(marketplace_root_from_json "$listing"); then
+    json_failure install install-failed "cannot parse Codex marketplaces"
+  fi
+  if [ -z "$registered_root" ]; then
+    if ! "$codex_bin" plugin marketplace add "$package_root"; then
+      json_failure install install-failed "codex marketplace add failed for $package_root"
+    fi
+  elif [ "$(paths_equal "$package_root" "$registered_root")" = different ]; then
+    if ! "$codex_bin" plugin marketplace remove superpowers-wrapper; then
+      json_failure install install-failed "codex marketplace remove failed for superpowers-wrapper"
+    fi
+    if ! "$codex_bin" plugin marketplace add "$package_root"; then
+      json_failure install install-failed \
+        "marketplace superpowers-wrapper was removed but re-adding failed." \
+        "recover with: $codex_bin plugin marketplace add $package_root" \
+        "previous root (last known good): $registered_root"
+    fi
+  fi
+
+  case "$refresh_mode" in
+    add-only) ;;
+    remove-add)
+      "$codex_bin" plugin remove superpowers@superpowers-wrapper || true
+      ;;
+  esac
+
+  if ! "$codex_bin" plugin add superpowers@superpowers-wrapper; then
+    json_failure install install-failed "codex plugin add failed for superpowers@superpowers-wrapper"
+  fi
+
+  mismatch_hint=""
+  missing_hint=""
+  [ ! -f "$state/adapter_install_hint_mismatch" ] || mismatch_hint="adapter mismatch hint"
+  [ ! -f "$state/adapter_install_hint_missing" ] || missing_hint="adapter missing hint"
+  json_success install "$mismatch_hint" "$missing_hint"
+}
+
+case "$operation" in
+  build)
+    SPW_ADAPTER="$SPW_TEST_PKG_ROOT/scripts/adapters/codex/adapter" \
+      exec "$SPW_TEST_PKG_ROOT/scripts/adapters/codex/adapter" build "$@"
+    ;;
+  inspect)
+    inspect_fingerprint
+    ;;
+  install)
+    adapter_install "$@"
+    ;;
+  *)
+    json_failure "$operation" unsupported-operation "unsupported adapter operation: $operation"
+    ;;
+esac
+EOF
+chmod +x "$fake_adapter"
+
 marketplace_absent='{"marketplaces":[{"name":"openai-curated","root":"/x"}]}'
 
 reset() {
   rm -f "$state/marketplace_list.rc" "$state/marketplace_add_fail" \
-        "$state/plugin_add_noop" "$state/plugin_add_stale"
+        "$state/plugin_add_fail" "$state/plugin_add_noop" "$state/plugin_add_stale" \
+        "$state/adapter_inspect_generated" "$state/adapter_inspect_missing" \
+        "$state/adapter_inspect_stale" "$state/adapter_install_hint_mismatch" \
+        "$state/adapter_install_hint_missing"
   rm -rf "$state/codex-home"
   : > "$log"
+  : > "$state/adapter.log"
 }
 
 run_install() {
   env \
+    SPW_ADAPTER="$fake_adapter" \
     SUPERPOWERS_CODEX="$fake_codex" \
     SUPERPOWERS_UPSTREAM_URL="$upstream" \
     SUPERPOWERS_INSTALLED_SEARCH_ROOT="$state/codex-home" \
     SPW_TEST_PKG_ROOT="$pkg" \
     "$@" \
     sh "$pkg/scripts/install"
+}
+
+run_update() {
+  env \
+    SPW_ADAPTER="$fake_adapter" \
+    SUPERPOWERS_CODEX="$fake_codex" \
+    SUPERPOWERS_UPSTREAM_URL="$upstream" \
+    SUPERPOWERS_INSTALLED_SEARCH_ROOT="$state/codex-home" \
+    SPW_TEST_PKG_ROOT="$pkg" \
+    "$@" \
+    sh "$pkg/scripts/update"
 }
 
 expect_fail() {
@@ -145,6 +388,10 @@ expect_fail() {
 
 line_of() {
   grep -Fn "$1" "$log" | head -n1 | cut -d: -f1
+}
+
+adapter_line_of() {
+  grep -Fn "$1" "$state/adapter.log" | head -n1 | cut -d: -f1
 }
 
 # ---------------------------------------------------------------------------
@@ -216,6 +463,45 @@ if grep -Fq "openai-curated" "$log"; then
 fi
 
 # ---------------------------------------------------------------------------
+# Scenario 1b: a generated/current wrapper still runs adapter install so the
+# package root is actively reconciled instead of being skipped as "already up to
+# date".
+# ---------------------------------------------------------------------------
+reset
+: > "$state/adapter_inspect_generated"
+printf '%s\n' "$marketplace_absent" > "$state/marketplace_list.json"
+run_install > "$state/out"
+grep -Fq "install --package-root $pkg" "$state/adapter.log"
+list_line=$(line_of "plugin marketplace list")
+add_line=$(line_of "plugin marketplace add $pkg")
+pa_line=$(line_of "plugin add superpowers@superpowers-wrapper")
+{ [ "$list_line" -lt "$add_line" ] && [ "$add_line" -lt "$pa_line" ]; } || {
+  echo "current install must still reconcile via adapter install" >&2
+  cat "$state/adapter.log" >&2
+  cat "$log" >&2
+  exit 1
+}
+
+# ---------------------------------------------------------------------------
+# Scenario 1c: even when the installed fingerprint already matches, a different
+# registered package root is reconciled through adapter install.
+# ---------------------------------------------------------------------------
+reset
+: > "$state/adapter_inspect_generated"
+printf '{"marketplaces":[{"name":"superpowers-wrapper","root":"%s"}]}\n' "$tmpdir/otherroot" > "$state/marketplace_list.json"
+run_install > "$state/out"
+grep -Fq "install --package-root $pkg" "$state/adapter.log"
+rm_line=$(line_of "plugin marketplace remove superpowers-wrapper")
+add_line=$(line_of "plugin marketplace add $pkg")
+pa_line=$(line_of "plugin add superpowers@superpowers-wrapper")
+{ [ "$rm_line" -lt "$add_line" ] && [ "$add_line" -lt "$pa_line" ]; } || {
+  echo "same-commit install must still reconcile a different package root" >&2
+  cat "$state/adapter.log" >&2
+  cat "$log" >&2
+  exit 1
+}
+
+# ---------------------------------------------------------------------------
 # Scenario 2: registered at the same physical root via a symlink -> keep.
 # Portable equivalent of macOS /var vs /private/var normalization.
 # ---------------------------------------------------------------------------
@@ -250,6 +536,25 @@ if grep -Fq "plugin remove superpowers@superpowers-wrapper" "$log"; then
 fi
 
 # ---------------------------------------------------------------------------
+# Scenario 3b: update stays read-only when probe reports current.
+# ---------------------------------------------------------------------------
+reset
+: > "$state/adapter_inspect_generated"
+printf '%s\n' "$marketplace_absent" > "$state/marketplace_list.json"
+run_update > "$state/out"
+grep -Fq "wrapper is current" "$state/out"
+if grep -Fq "install --package-root" "$state/adapter.log"; then
+  echo "update must not invoke adapter install when probe reports current" >&2
+  cat "$state/adapter.log" >&2
+  exit 1
+fi
+[ ! -s "$log" ] || {
+  echo "current update must not mutate Codex state" >&2
+  cat "$log" >&2
+  exit 1
+}
+
+# ---------------------------------------------------------------------------
 # Scenario 4: remove succeeds, add fails -> non-zero, recovery message names
 # the current root AND the previous root; plugin add never attempted.
 # ---------------------------------------------------------------------------
@@ -282,25 +587,51 @@ reset
 printf '%s\n' "$marketplace_absent" > "$state/marketplace_list.json"
 : > "$state/plugin_add_noop"
 expect_fail
-grep -Fq "installed wrapper not detectable" "$state/out"
+grep -Fq "fingerprint is not detectable" "$state/out"
 if grep -Fq "wrapper updated" "$state/out"; then
   echo "must not print success when the installed wrapper is undetectable" >&2; exit 1
 fi
 
 # ---------------------------------------------------------------------------
-# Scenario 7: installed fingerprint stays stale -> install fails, no success.
+# Scenario 7: installed fingerprint stays stale -> install fails, no success,
+# and any retry hint comes from the adapter result rather than hardcoded core
+# text.
 # ---------------------------------------------------------------------------
 reset
 printf '%s\n' "$marketplace_absent" > "$state/marketplace_list.json"
-: > "$state/plugin_add_stale"
+: > "$state/adapter_inspect_stale"
+: > "$state/adapter_install_hint_mismatch"
 expect_fail
-grep -Fq "still stale" "$state/out"
+grep -Fq "does not match the prepared plugin" "$state/out"
+grep -Fq "adapter mismatch hint" "$state/out"
+if grep -Fq "SUPERPOWERS_INSTALL_REFRESH_MODE=remove-add" "$state/out"; then
+  echo "stale retry hint must come only from adapter install result" >&2
+  cat "$state/out" >&2
+  exit 1
+fi
 if grep -Fq "wrapper updated" "$state/out"; then
   echo "must not print success while stale" >&2; exit 1
 fi
 
 # ---------------------------------------------------------------------------
-# Scenario 8: remove-add refresh mode -> plugin remove between marketplace
+# Scenario 8: missing fingerprint replay hint also comes only from the adapter
+# result.
+# ---------------------------------------------------------------------------
+reset
+printf '%s\n' "$marketplace_absent" > "$state/marketplace_list.json"
+: > "$state/adapter_inspect_missing"
+: > "$state/adapter_install_hint_missing"
+expect_fail
+grep -Fq "fingerprint is not detectable" "$state/out"
+grep -Fq "adapter missing hint" "$state/out"
+if grep -Fq "verify with 'codex plugin list --json'" "$state/out"; then
+  echo "missing fingerprint hint must come only from adapter install result" >&2
+  cat "$state/out" >&2
+  exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# Scenario 9: remove-add refresh mode -> plugin remove between marketplace
 # reconcile and plugin add; still only wrapper-scoped.
 # ---------------------------------------------------------------------------
 reset
@@ -320,7 +651,7 @@ if grep -Fq "openai-curated" "$log"; then
 fi
 
 # ---------------------------------------------------------------------------
-# Scenario 9: invalid refresh mode -> fails before any codex call.
+# Scenario 10: invalid refresh mode -> fails before any codex call.
 # ---------------------------------------------------------------------------
 reset
 printf '%s\n' "$marketplace_absent" > "$state/marketplace_list.json"

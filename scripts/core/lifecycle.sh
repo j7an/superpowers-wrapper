@@ -35,3 +35,45 @@ spw_generated_commit_or_empty() {
   metadata=$(spw_generated_metadata_path "$root")
   spw_metadata_commit_or_empty "$metadata" || true
 }
+
+spw_verify_installed_fingerprint() {
+  desired_commit="$1"
+  install_result="$2"
+  tmp_parent="${TMPDIR:-/tmp}"
+  inspect_result="$tmp_parent/.superpowers.inspect.$$.json"
+  cleanup() {
+    rm -f "$inspect_result" "$inspect_result.response"
+  }
+  trap cleanup EXIT HUP INT TERM
+  spw_inspect_fingerprint "$inspect_result"
+  installed_commit=$(spw_adapter_result_get "$inspect_result" "fingerprint")
+  printf 'desired_commit=%s\n' "$desired_commit"
+  printf 'installed_commit=%s\n' "$installed_commit"
+  if [ -n "$installed_commit" ] && spw_commit_matches "$desired_commit" "$installed_commit"; then
+    echo "wrapper updated"
+    trap - EXIT HUP INT TERM
+    cleanup
+    return 0
+  fi
+
+  hint=""
+  if [ -f "$install_result" ]; then
+    if [ -n "$installed_commit" ]; then
+      hint=$(spw_adapter_result_get "$install_result" "verification_hints.mismatch" || true)
+    else
+      hint=$(spw_adapter_result_get "$install_result" "verification_hints.missing" || true)
+    fi
+  fi
+
+  if [ -n "$installed_commit" ]; then
+    echo "error: installed wrapper fingerprint does not match the prepared plugin after install." >&2
+  else
+    echo "error: installed wrapper fingerprint is not detectable after install." >&2
+  fi
+  if [ -n "$hint" ]; then
+    echo "hint: $hint" >&2
+  fi
+  trap - EXIT HUP INT TERM
+  cleanup
+  exit 1
+}

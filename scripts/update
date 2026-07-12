@@ -15,15 +15,9 @@ case "$status" in
   needs\ prepare)
     sh "$root/scripts/prepare"
     sh "$root/scripts/install"
-    desired_commit=$(spw_metadata_commit_or_empty "$root/plugins/superpowers/.superpowers-upstream.json" || true)
-    [ -n "$desired_commit" ] || spw_die "generated metadata missing desired commit after install"
-    spw_verify_refresh "$desired_commit"
     ;;
   needs\ install)
     sh "$root/scripts/install"
-    desired_commit=$(spw_metadata_commit_or_empty "$root/plugins/superpowers/.superpowers-upstream.json" || true)
-    [ -n "$desired_commit" ] || spw_die "generated metadata missing desired commit after install"
-    spw_verify_refresh "$desired_commit"
     ;;
   *)
     echo "$probe_output"

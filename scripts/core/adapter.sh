@@ -53,3 +53,9 @@ spw_inspect_fingerprint() {
   result_file="$1"
   spw_invoke_adapter inspect "$result_file" fingerprint -- --view fingerprint
 }
+
+spw_adapter_install() {
+  result_file="$1"
+  package_root="$2"
+  spw_invoke_adapter install "$result_file" "" -- --package-root "$package_root"
+}

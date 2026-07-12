@@ -212,29 +212,34 @@ grep -Fq "$tmpdir/old-root" "$tmpdir/failed-add.out"
 grep -Fq "$tmpdir/new-root" "$tmpdir/failed-add.out"
 grep -Fq "recover with:" "$tmpdir/failed-add.out"
 
-# --- spw_verify_refresh: compares installed metadata to the desired commit
-# passed by the caller; it must not call scripts/probe or resolve upstream after
-# Codex has already been mutated.
+# --- spw_verify_installed_fingerprint: compares the installed fingerprint to
+# the desired commit and replays only optional adapter-provided hints.
 desired="abcdef0123456789abcdef0123456789abcdef01"
 installed_root="$tmpdir/codex/plugins/cache/superpowers-wrapper/superpowers/1.0.0"
 mkdir -p "$installed_root"
 cat > "$installed_root/.superpowers-upstream.json" <<EOF
 {"commit":"$desired"}
 EOF
-out=$(SUPERPOWERS_INSTALLED_SEARCH_ROOT="$tmpdir/codex" spw_verify_refresh "$desired")
+install_result="$tmpdir/install-result.json"
+cat > "$install_result" <<'EOF'
+{"verification_hints":{"mismatch":"adapter mismatch hint","missing":"adapter missing hint"}}
+EOF
+out=$(SUPERPOWERS_INSTALLED_SEARCH_ROOT="$tmpdir/codex" spw_verify_installed_fingerprint "$desired" "$install_result")
 printf '%s\n' "$out" | grep -Fq "wrapper updated"
 printf '%s\n' "$out" | grep -Fq "installed_commit=$desired"
 
-if (SUPERPOWERS_INSTALLED_SEARCH_ROOT="$tmpdir/codex" spw_verify_refresh "1111111111111111111111111111111111111111") >"$tmpdir/stale.out" 2>&1; then
+if (SUPERPOWERS_INSTALLED_SEARCH_ROOT="$tmpdir/codex" spw_verify_installed_fingerprint "1111111111111111111111111111111111111111" "$install_result") >"$tmpdir/stale.out" 2>&1; then
   echo "stale installed metadata must fail" >&2; exit 1
 fi
-grep -Fq "still stale" "$tmpdir/stale.out"
+grep -Fq "does not match the prepared plugin" "$tmpdir/stale.out"
+grep -Fq "adapter mismatch hint" "$tmpdir/stale.out"
 
 rm -rf "$tmpdir/codex"
-if (SUPERPOWERS_INSTALLED_SEARCH_ROOT="$tmpdir/codex" spw_verify_refresh "$desired") >"$tmpdir/undetectable.out" 2>&1; then
+if (SUPERPOWERS_INSTALLED_SEARCH_ROOT="$tmpdir/codex" spw_verify_installed_fingerprint "$desired" "$install_result") >"$tmpdir/undetectable.out" 2>&1; then
   echo "undetectable installed metadata must fail" >&2; exit 1
 fi
-grep -Fq "installed wrapper not detectable" "$tmpdir/undetectable.out"
+grep -Fq "fingerprint is not detectable" "$tmpdir/undetectable.out"
+grep -Fq "adapter missing hint" "$tmpdir/undetectable.out"
 if grep -Fq "wrapper updated" "$tmpdir/undetectable.out"; then
   echo "undetectable installed metadata must not print success" >&2; exit 1
 fi
