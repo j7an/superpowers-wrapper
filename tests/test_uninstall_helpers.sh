@@ -2,7 +2,8 @@
 set -eu
 
 root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
-. "$root/scripts/lib.sh"
+. "$root/scripts/core/common.sh"
+. "$root/scripts/adapters/codex/lib.sh"
 
 plugins='{"installed":[{"pluginId":"superpowers@superpowers-wrapper"},{"pluginId":"other@x"}],"available":[]}'
 markets='{"marketplaces":[{"name":"openai-curated"},{"name":"superpowers-wrapper"}]}'

@@ -77,3 +77,14 @@ spw_verify_installed_fingerprint() {
   cleanup
   exit 1
 }
+
+spw_verify_uninstalled_resources() {
+  inspect_result="$1"
+
+  if [ "$(spw_adapter_result_boolean "$inspect_result" "resources.plugin")" = true ]; then
+    spw_die "plugin $SPW_PLUGIN_ID is still installed after removal"
+  fi
+  if [ "$(spw_adapter_result_boolean "$inspect_result" "resources.marketplace")" = true ]; then
+    spw_die "marketplace $SPW_MARKETPLACE_NAME is still registered after removal"
+  fi
+}

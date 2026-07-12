@@ -77,6 +77,13 @@ sys.stdout.write("\n")
 PY
 }
 
+spw_codex_append_message_text() {
+  messages_file="$1"
+  channel="$2"
+  text="$3"
+  printf '%s\t%s\n' "$channel" "$text" >> "$messages_file"
+}
+
 spw_codex_build() {
   upstream_root=
   candidate_root=
@@ -341,7 +348,90 @@ spw_codex_install() {
   spw_codex_success install "$result_json" "$messages_file"
 }
 
-spw_codex_inspect_fingerprint() {
+spw_codex_uninstall() {
+  plugin_present=
+  marketplace_present=
+  seen_plugin_present=0
+  seen_marketplace_present=0
+
+  while [ "$#" -gt 0 ]; do
+    flag="$1"
+    shift
+    case "$flag" in
+      --plugin-present)
+        [ "$#" -gt 0 ] || spw_codex_argument_error uninstall "missing value for --plugin-present"
+        [ "$seen_plugin_present" -eq 0 ] || spw_codex_argument_error uninstall "duplicate flag: --plugin-present"
+        plugin_present="$1"
+        seen_plugin_present=1
+        shift
+        ;;
+      --marketplace-present)
+        [ "$#" -gt 0 ] || spw_codex_argument_error uninstall "missing value for --marketplace-present"
+        [ "$seen_marketplace_present" -eq 0 ] || spw_codex_argument_error uninstall "duplicate flag: --marketplace-present"
+        marketplace_present="$1"
+        seen_marketplace_present=1
+        shift
+        ;;
+      *)
+        spw_codex_argument_error uninstall "unknown flag: $flag"
+        ;;
+    esac
+  done
+
+  [ "$seen_plugin_present" -eq 1 ] || spw_codex_argument_error uninstall "missing required flag: --plugin-present"
+  [ "$seen_marketplace_present" -eq 1 ] || spw_codex_argument_error uninstall "missing required flag: --marketplace-present"
+  case "$plugin_present" in
+    true|false) ;;
+    *) spw_codex_argument_error uninstall "--plugin-present must be true or false" ;;
+  esac
+  case "$marketplace_present" in
+    true|false) ;;
+    *) spw_codex_argument_error uninstall "--marketplace-present must be true or false" ;;
+  esac
+
+  codex_bin="${SUPERPOWERS_CODEX:-codex}"
+  spw_require_command "$codex_bin"
+
+  scratch="${TMPDIR:-/tmp}/.superpowers.adapter-uninstall.$$"
+  stdout_file="$scratch/stdout"
+  stderr_file="$scratch/stderr"
+  messages_file="$scratch/messages"
+  cleanup() {
+    status=$?
+    trap - 0 HUP INT TERM
+    rm -rf "$scratch" || :
+    exit "$status"
+  }
+  trap cleanup 0
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+
+  mkdir -p "$scratch"
+  : > "$messages_file"
+
+  if [ "$plugin_present" = true ]; then
+    if ! spw_codex_capture_command "$messages_file" "$stdout_file" "$stderr_file" "$codex_bin" plugin remove "$SPW_PLUGIN_ID"; then
+      spw_codex_failure uninstall "uninstall-failed" "codex plugin remove failed for $SPW_PLUGIN_ID" "" "$messages_file"
+    fi
+    spw_codex_append_message_text "$messages_file" stdout "removed plugin $SPW_PLUGIN_ID"
+  else
+    spw_codex_append_message_text "$messages_file" stdout "plugin not installed; skipping"
+  fi
+
+  if [ "$marketplace_present" = true ]; then
+    if ! spw_codex_capture_command "$messages_file" "$stdout_file" "$stderr_file" "$codex_bin" plugin marketplace remove "$SPW_MARKETPLACE_NAME"; then
+      spw_codex_failure uninstall "uninstall-failed" "codex plugin marketplace remove failed for $SPW_MARKETPLACE_NAME" "" "$messages_file"
+    fi
+    spw_codex_append_message_text "$messages_file" stdout "removed marketplace $SPW_MARKETPLACE_NAME"
+  else
+    spw_codex_append_message_text "$messages_file" stdout "marketplace not registered; skipping"
+  fi
+
+  spw_codex_success uninstall '{}' "$messages_file"
+}
+
+spw_codex_inspect() {
   view=
   seen_view=0
 
@@ -363,14 +453,66 @@ spw_codex_inspect_fingerprint() {
   done
 
   [ "$seen_view" -eq 1 ] || spw_codex_argument_error inspect "missing required flag: --view"
-  [ "$view" = "fingerprint" ] || spw_codex_argument_error inspect "unsupported inspect view: $view"
 
-  fingerprint=$(spw_installed_commit_or_empty || true)
-  if [ -n "$fingerprint" ]; then
-    spw_codex_success inspect "{\"view\":\"fingerprint\",\"fingerprint\":\"$fingerprint\"}" ""
-  else
-    spw_codex_success inspect '{"view":"fingerprint","fingerprint":null}' ""
-  fi
+  case "$view" in
+    fingerprint)
+      fingerprint=$(spw_installed_commit_or_empty || true)
+      if [ -n "$fingerprint" ]; then
+        spw_codex_success inspect "{\"view\":\"fingerprint\",\"fingerprint\":\"$fingerprint\"}" ""
+      else
+        spw_codex_success inspect '{"view":"fingerprint","fingerprint":null}' ""
+      fi
+      ;;
+    ownership)
+      codex_bin="${SUPERPOWERS_CODEX:-codex}"
+      spw_require_command "$codex_bin"
+      spw_require_command python3
+
+      scratch="${TMPDIR:-/tmp}/.superpowers.adapter-inspect.$$"
+      stderr_file="$scratch/stderr"
+      messages_file="$scratch/messages"
+      cleanup() {
+        status=$?
+        trap - 0 HUP INT TERM
+        rm -rf "$scratch" || :
+        exit "$status"
+      }
+      trap cleanup 0
+      trap 'exit 129' HUP
+      trap 'exit 130' INT
+      trap 'exit 143' TERM
+
+      mkdir -p "$scratch"
+      : > "$messages_file"
+
+      : > "$stderr_file"
+      if ! plugin_listing=$("$codex_bin" plugin list --json 2>"$stderr_file"); then
+        spw_codex_append_messages "$messages_file" stderr "$stderr_file"
+        spw_codex_failure inspect "inspect-failed" "cannot list Codex plugins via '$codex_bin plugin list --json'" "" "$messages_file"
+      fi
+      spw_codex_append_messages "$messages_file" stderr "$stderr_file"
+      if ! plugin_result=$(spw_json_array_has "$plugin_listing" "installed" "pluginId" "$SPW_PLUGIN_ID"); then
+        spw_codex_failure inspect "inspect-failed" "cannot parse output of '$codex_bin plugin list --json'" "" "$messages_file"
+      fi
+
+      : > "$stderr_file"
+      if ! marketplace_listing=$("$codex_bin" plugin marketplace list --json 2>"$stderr_file"); then
+        spw_codex_append_messages "$messages_file" stderr "$stderr_file"
+        spw_codex_failure inspect "inspect-failed" "cannot list Codex marketplaces via '$codex_bin plugin marketplace list --json'" "" "$messages_file"
+      fi
+      spw_codex_append_messages "$messages_file" stderr "$stderr_file"
+      if ! marketplace_result=$(spw_json_array_has "$marketplace_listing" "marketplaces" "name" "$SPW_MARKETPLACE_NAME"); then
+        spw_codex_failure inspect "inspect-failed" "cannot parse output of '$codex_bin plugin marketplace list --json'" "" "$messages_file"
+      fi
+
+      spw_codex_success inspect \
+        "{\"view\":\"ownership\",\"resources\":{\"plugin\":$([ "$plugin_result" = present ] && printf true || printf false),\"marketplace\":$([ "$marketplace_result" = present ] && printf true || printf false)}}" \
+        "$messages_file"
+      ;;
+    *)
+      spw_codex_argument_error inspect "unsupported inspect view: $view"
+      ;;
+  esac
 }
 
 operation="${1:-}"
@@ -385,7 +527,10 @@ case "$operation" in
     spw_codex_install "$@"
     ;;
   inspect)
-    spw_codex_inspect_fingerprint "$@"
+    spw_codex_inspect "$@"
+    ;;
+  uninstall)
+    spw_codex_uninstall "$@"
     ;;
   *)
     spw_codex_emit "$operation" false '{}' "unsupported-operation" "unsupported adapter operation: $operation" "" ""

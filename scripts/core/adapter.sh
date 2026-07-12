@@ -49,13 +49,44 @@ spw_adapter_result_get() {
   spw_json_get "$result_file" "$dotted_key"
 }
 
+spw_adapter_result_boolean() {
+  result_file="$1"
+  dotted_key="$2"
+  value=$(spw_adapter_result_get "$result_file" "$dotted_key")
+  case "$value" in
+    true|True)
+      printf 'true\n'
+      ;;
+    false|False)
+      printf 'false\n'
+      ;;
+    *)
+      spw_die "expected Boolean adapter result at $dotted_key in $result_file"
+      ;;
+  esac
+}
+
 spw_inspect_fingerprint() {
   result_file="$1"
   spw_invoke_adapter inspect "$result_file" fingerprint -- --view fingerprint
+}
+
+spw_inspect_ownership() {
+  result_file="$1"
+  spw_invoke_adapter inspect "$result_file" ownership -- --view ownership
 }
 
 spw_adapter_install() {
   result_file="$1"
   package_root="$2"
   spw_invoke_adapter install "$result_file" "" -- --package-root "$package_root"
+}
+
+spw_adapter_uninstall() {
+  result_file="$1"
+  plugin_present="$2"
+  marketplace_present="$3"
+  spw_invoke_adapter uninstall "$result_file" "" -- \
+    --plugin-present "$plugin_present" \
+    --marketplace-present "$marketplace_present"
 }
