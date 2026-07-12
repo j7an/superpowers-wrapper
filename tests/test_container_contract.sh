@@ -17,6 +17,7 @@ grep -Fq '"typescript": "7.0.2"' "$tools"
 grep -Fq '"@types/node": "24.13.3"' "$tools"
 grep -Fq -- '--network none' "$runner"
 grep -Fq -- '--read-only' "$runner"
+grep -Fq -- '--tmpfs /home/spw:rw,nosuid,size=128m,uid=10001,gid=10001' "$runner"
 grep -Fq 'suite)' "$runner"
 grep -Fq 'codex-spike)' "$runner"
 

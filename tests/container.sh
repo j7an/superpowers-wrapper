@@ -26,5 +26,5 @@ exec docker run --rm \
   --network none \
   --read-only \
   --tmpfs /tmp:rw,exec,nosuid,size=512m \
-  --tmpfs /home/spw:rw,nosuid,size=128m \
+  --tmpfs /home/spw:rw,nosuid,size=128m,uid=10001,gid=10001 \
   "$image" "$mode"
