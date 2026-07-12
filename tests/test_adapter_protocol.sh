@@ -72,6 +72,81 @@ run_adapter crash build ""
 grep -Fxq 'adapter crashed' "$RUN_STDERR"
 grep -Fq 'error: invalid adapter response:' "$RUN_STDERR"
 
+real_pkg="$tmpdir/real-package-root"
+real_state="$tmpdir/real-codex-state"
+real_codex="$tmpdir/real-codex"
+mkdir -p "$real_pkg" "$real_state"
+cat > "$real_codex" <<'SH'
+#!/bin/sh
+set -eu
+
+state="${SPW_REAL_CODEX_STATE:?}"
+scenario="${SPW_REAL_CODEX_SCENARIO:?}"
+printf '%s\n' "$*" >> "$state/log"
+
+if [ "$1" = plugin ] && [ "$2" = marketplace ] && [ "$3" = list ]; then
+  printf '%s\n' '{"marketplaces":[]}'
+  exit 0
+fi
+if [ "$1" = plugin ] && [ "$2" = marketplace ] && [ "$3" = add ]; then
+  printf '%b' 'marketplace-out\\literal\ttag\rdone\n'
+  printf '%b' 'marketplace-err\\literal\ttag\rdone\n' >&2
+  exit 0
+fi
+if [ "$1" = plugin ] && [ "$2" = add ]; then
+  printf '%b' 'plugin-out\\literal\ttag\rdone\n'
+  printf '%b' 'plugin-err\\literal\ttag\rdone\n' >&2
+  if [ "$scenario" = install-failure-after-mutation ]; then
+    exit 1
+  fi
+  exit 0
+fi
+
+echo "unexpected fake codex command: $*" >&2
+exit 99
+SH
+chmod +x "$real_codex"
+
+run_real_install() {
+  scenario="$1"
+  RUN_RESULT="$tmpdir/${scenario}-real-install.result.json"
+  RUN_STDOUT="$tmpdir/${scenario}-real-install.stdout"
+  RUN_STDERR="$tmpdir/${scenario}-real-install.stderr"
+  rm -f "$RUN_RESULT" "$RUN_RESULT.response" "$RUN_STDOUT" "$RUN_STDERR" "$real_state/log"
+
+  RUN_RC=0
+  SPW_ADAPTER="$root/scripts/adapters/codex/adapter" \
+  SUPERPOWERS_CODEX="$real_codex" \
+  SPW_REAL_CODEX_STATE="$real_state" \
+  SPW_REAL_CODEX_SCENARIO="$scenario" \
+  spw_invoke_adapter install "$RUN_RESULT" "" -- --package-root "$real_pkg" \
+    >"$RUN_STDOUT" 2>"$RUN_STDERR" || RUN_RC=$?
+}
+
+run_real_install install-success
+[ "$RUN_RC" -eq 0 ]
+[ -f "$RUN_RESULT" ]
+[ ! -s "$RUN_STDOUT" ]
+grep -Fxq 'marketplace-out\\literal\ttag\rdone' "$RUN_STDERR"
+grep -Fxq 'marketplace-err\\literal\ttag\rdone' "$RUN_STDERR"
+grep -Fxq 'plugin-out\\literal\ttag\rdone' "$RUN_STDERR"
+grep -Fxq 'plugin-err\\literal\ttag\rdone' "$RUN_STDERR"
+if grep -Fq 'error: invalid adapter response:' "$RUN_STDERR"; then
+  echo "escaped Codex output must not poison a successful install envelope" >&2
+  exit 1
+fi
+
+run_real_install install-failure-after-mutation
+[ "$RUN_RC" -eq 1 ]
+[ ! -f "$RUN_RESULT" ]
+grep -Fxq 'plugin-out\\literal\ttag\rdone' "$RUN_STDERR"
+grep -Fxq 'plugin-err\\literal\ttag\rdone' "$RUN_STDERR"
+grep -Fxq 'error: codex plugin add failed for superpowers@superpowers-wrapper' "$RUN_STDERR"
+if grep -Fq 'error: invalid adapter response:' "$RUN_STDERR"; then
+  echo "escaped Codex output must not poison a controlled failure envelope" >&2
+  exit 1
+fi
+
 RUN_RESULT="$tmpdir/real-inspect-invalid.result.json"
 RUN_STDOUT="$tmpdir/real-inspect-invalid.stdout"
 RUN_STDERR="$tmpdir/real-inspect-invalid.stderr"

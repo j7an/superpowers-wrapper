@@ -335,13 +335,32 @@ spw_codex_failure() {
   exit 1
 }
 
+# Append command output as structured message records while keeping the
+# tab-delimited spool format unambiguous. Each physical command-output line is
+# escaped with Python's unicode_escape codec so literal backslashes remain
+# distinguishable from rendered control characters like \t and \r.
 spw_codex_append_messages() {
   messages_file="$1"
   channel="$2"
   input_file="$3"
   [ -f "$input_file" ] || return 0
-  while IFS= read -r line || [ -n "$line" ]; do
-    [ -n "$line" ] || continue
-    printf '%s\t%s\n' "$channel" "$line" >> "$messages_file"
-  done < "$input_file"
+  python3 - "$messages_file" "$channel" "$input_file" <<'PY'
+from pathlib import Path
+import sys
+
+messages_path = Path(sys.argv[1])
+channel = sys.argv[2]
+input_path = Path(sys.argv[3])
+
+chunks = input_path.read_bytes().split(b"\n")
+with messages_path.open("a", encoding="utf-8") as handle:
+    for chunk in chunks:
+        if not chunk:
+            continue
+        text = chunk.decode("utf-8")
+        escaped = text.encode("unicode_escape").decode("ascii")
+        if not escaped:
+            continue
+        handle.write(f"{channel}\t{escaped}\n")
+PY
 }
