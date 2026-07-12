@@ -320,7 +320,12 @@ import sys
 operation, ok_text, result_text, code, error_message, hints_path, messages_path = sys.argv[1:]
 
 def has_terminal_control(value):
-    return any(ord(char) < 0x20 or 0x7f <= ord(char) <= 0x9f for char in value)
+    return any(
+        ord(char) < 0x20
+        or 0x7f <= ord(char) <= 0x9f
+        or 0xd800 <= ord(char) <= 0xdfff
+        for char in value
+    )
 
 if any(has_terminal_control(value) for value in (operation, code, error_message)):
     raise SystemExit("protocol strings must not contain terminal control characters")

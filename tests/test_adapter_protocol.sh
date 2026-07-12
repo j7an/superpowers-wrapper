@@ -186,6 +186,22 @@ fi
 [ ! -s "$control_out" ]
 grep -Fq 'protocol strings must not contain terminal control characters' "$control_err"
 
+# A lone UTF-8 surrogate from a POSIX argv byte replays as its original byte
+# through Python's surrogateescape handler unless the emitter rejects it.
+surrogate=$(LC_ALL=C printf '\233')
+surrogate_out="$tmpdir/surrogate.out"
+surrogate_err="$tmpdir/surrogate.err"
+if LC_ALL=C "$root/scripts/adapters/codex/adapter" "bad-$surrogate" \
+  >"$surrogate_out" 2>"$surrogate_err"; then
+  echo "surrogate adapter operation must be rejected" >&2
+  exit 1
+fi
+if [ -s "$surrogate_out" ]; then
+  echo "surrogate adapter operation emitted bytes: $(LC_ALL=C od -An -tx1 "$surrogate_out")" >&2
+  exit 1
+fi
+grep -Fq 'protocol strings must not contain terminal control characters' "$surrogate_err"
+
 # A zero-argument adapter failure must identify the adapter boundary, not
 # falsely claim that the build operation ran.
 zero_out="$tmpdir/zero-argument.out"

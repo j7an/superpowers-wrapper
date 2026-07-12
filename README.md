@@ -56,10 +56,9 @@ and never falsely reports success.
 
 ## Runtime architecture
 
-- `scripts/core/` owns the shared lifecycle, provenance, validation, and
-  reconcile logic.
-- `scripts/adapters/codex/` owns the current Codex-specific adapter entrypoint,
-  install-state inspection, and response validation helpers.
+- `scripts/core/` owns the shared lifecycle, status, and protocol validation.
+- `scripts/adapters/codex/` owns build, inspection, reconciliation, and Codex
+  mutation.
 - The public CLI remains plugin-first (`prepare`, `probe`, `install`, `update`,
   `uninstall`); there is no public harness selector or adapter-selection flag.
 - A future non-Codex adapter would need its own design plus native/container

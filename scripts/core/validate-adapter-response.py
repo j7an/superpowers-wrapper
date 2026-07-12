@@ -58,7 +58,9 @@ def require_exact_keys(value: dict[str, object], expected: set[str], label: str)
 
 def contains_terminal_control(value: str) -> bool:
     return any(
-        ord(character) < 0x20 or 0x7F <= ord(character) <= 0x9F
+        ord(character) < 0x20
+        or 0x7F <= ord(character) <= 0x9F
+        or 0xD800 <= ord(character) <= 0xDFFF
         for character in value
     )
 

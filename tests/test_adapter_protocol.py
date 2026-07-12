@@ -66,6 +66,34 @@ def validate_raw(
         return process
 
 
+def validate_binary(
+    payload: object,
+    operation: str,
+    adapter_exit: int = 0,
+    inspect_view: str | None = None,
+) -> subprocess.CompletedProcess[bytes]:
+    with tempfile.TemporaryDirectory() as tmp:
+        response = Path(tmp) / "response.json"
+        result = Path(tmp) / "result.json"
+        response.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+        command = [
+            sys.executable,
+            "-S",
+            str(VALIDATOR),
+            "--operation",
+            operation,
+            "--adapter-exit",
+            str(adapter_exit),
+            "--response",
+            str(response),
+            "--result",
+            str(result),
+        ]
+        if inspect_view is not None:
+            command.extend(["--inspect-view", inspect_view])
+        return subprocess.run(command, capture_output=True, check=False)
+
+
 def _run_validator(
     response: Path,
     result: Path,
@@ -304,6 +332,71 @@ class AdapterProtocolValidatorTests(unittest.TestCase):
                     adapter_exit=adapter_exit,
                     fragment=f"{label} must not contain terminal control characters",
                 )
+
+    def test_rejects_surrogate_escapes_in_terminal_facing_protocol_strings(self) -> None:
+        surrogate = "\udc9b"
+        failure = envelope("install", {}, ok=False)
+        invalid_cases = (
+            (
+                {
+                    **envelope("build", {}),
+                    "messages": [{"channel": "stdout", "text": f"unsafe{surrogate}"}],
+                },
+                "build",
+                0,
+            ),
+            (
+                {
+                    **failure,
+                    "error": {
+                        "code": f"unsafe{surrogate}",
+                        "message": "controlled failure",
+                        "hints": [],
+                    },
+                },
+                "install",
+                1,
+            ),
+            (
+                {
+                    **failure,
+                    "error": {
+                        "code": "controlled-failure",
+                        "message": f"unsafe{surrogate}",
+                        "hints": [],
+                    },
+                },
+                "install",
+                1,
+            ),
+            (
+                {
+                    **failure,
+                    "error": {
+                        "code": "controlled-failure",
+                        "message": "controlled failure",
+                        "hints": [f"unsafe{surrogate}"],
+                    },
+                },
+                "install",
+                1,
+            ),
+            (
+                envelope(
+                    "install",
+                    {"verification_hints": {"missing": f"unsafe{surrogate}"}},
+                ),
+                "install",
+                0,
+            ),
+        )
+        for payload, operation, adapter_exit in invalid_cases:
+            with self.subTest(payload=payload):
+                result = validate_binary(payload, operation, adapter_exit)
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertIn(b"terminal control characters", result.stderr)
+                self.assertEqual(result.stdout, b"")
+                self.assertNotIn(b"\x9b", result.stdout + result.stderr)
 
     def test_rejects_empty_malformed_non_object_and_extra_fields(self) -> None:
         invalid_json_cases = (
