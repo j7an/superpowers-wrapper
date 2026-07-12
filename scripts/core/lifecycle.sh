@@ -24,3 +24,14 @@ spw_replace_generated_tree() {
     spw_die "failed to install generated tree into $live_root; previous tree restored"
   fi
 }
+
+spw_generated_metadata_path() {
+  root="$1"
+  printf '%s\n' "$root/plugins/superpowers/.superpowers-upstream.json"
+}
+
+spw_generated_commit_or_empty() {
+  root="$1"
+  metadata=$(spw_generated_metadata_path "$root")
+  spw_metadata_commit_or_empty "$metadata" || true
+}

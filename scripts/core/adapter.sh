@@ -48,3 +48,8 @@ spw_adapter_result_get() {
   dotted_key="$2"
   spw_json_get "$result_file" "$dotted_key"
 }
+
+spw_inspect_fingerprint() {
+  result_file="$1"
+  spw_invoke_adapter inspect "$result_file" fingerprint -- --view fingerprint
+}

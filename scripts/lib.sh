@@ -9,28 +9,6 @@ root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 . "$root/scripts/core/adapter.sh"
 . "$root/scripts/adapters/codex/lib.sh"
 
-# Codex installs a plugin into a versioned cache directory:
-#   ~/.codex/plugins/cache/<marketplace>/superpowers/<version>/...
-# so the metadata/manifest live one directory below the plugin name, not
-# directly inside it (confirmed by the Task 1 behavior probe against the live
-# install). Match both the versioned layout and a flat layout (no intervening
-# version directory) so staging copies and any future flat cache still resolve.
-spw_find_installed_metadata() {
-  search_root="${SUPERPOWERS_INSTALLED_SEARCH_ROOT:-$HOME/.codex}"
-  find "$search_root" \
-    \( -path "*/superpowers/.superpowers-upstream.json" \
-       -o -path "*/superpowers/*/.superpowers-upstream.json" \) \
-    -type f 2>/dev/null | head -n 1
-}
-
-spw_find_installed_manifest() {
-  search_root="${SUPERPOWERS_INSTALLED_SEARCH_ROOT:-$HOME/.codex}"
-  find "$search_root" \
-    \( -path "*/superpowers/.codex-plugin/plugin.json" \
-       -o -path "*/superpowers/*/.codex-plugin/plugin.json" \) \
-    -type f 2>/dev/null | head -n 1
-}
-
 # Given a JSON document as the FIRST ARGUMENT (a string), print "present" if any
 # element of the top-level array <array_key> is an object whose <field> equals
 # <value>, else print "absent" (exit 0). On unparseable JSON or invalid schema,
@@ -183,40 +161,36 @@ spw_reconcile_marketplace() {
   fi
 }
 
-# Return the currently installed wrapper commit/fingerprint, or empty if the
-# installed plugin cannot be detected. This is intentionally local-only: callers
-# pass the desired commit into spw_verify_refresh so post-mutation verification
-# never refetches or re-resolves upstream after Codex state has changed.
-spw_installed_commit_or_empty() {
-  installed_metadata=$(spw_find_installed_metadata || true)
-  installed_manifest=$(spw_find_installed_manifest || true)
-  installed_commit=""
-  if [ -n "$installed_metadata" ]; then
-    installed_commit=$(spw_metadata_commit_or_empty "$installed_metadata" || true)
-  fi
-  if [ -z "$installed_commit" ] && [ -n "$installed_manifest" ]; then
-    installed_commit=$(spw_manifest_short_sha_or_empty "$installed_manifest" || true)
-  fi
-  printf '%s\n' "$installed_commit"
-}
-
 # After an install, confirm the installed wrapper refreshed to <desired_commit>.
 # Never prints a success line while the installed wrapper is detectably stale.
 # Shared by scripts/install and scripts/update.
 spw_verify_refresh() {
   desired_commit="$1"
-  installed_commit=$(spw_installed_commit_or_empty || true)
+  tmp_parent="${TMPDIR:-/tmp}"
+  inspect_result="$tmp_parent/.superpowers.inspect.$$.json"
+  cleanup() {
+    rm -f "$inspect_result" "$inspect_result.response"
+  }
+  trap cleanup EXIT HUP INT TERM
+  spw_inspect_fingerprint "$inspect_result"
+  installed_commit=$(spw_adapter_result_get "$inspect_result" "fingerprint")
   printf 'desired_commit=%s\n' "$desired_commit"
   printf 'installed_commit=%s\n' "$installed_commit"
   if [ -n "$installed_commit" ] && spw_commit_matches "$desired_commit" "$installed_commit"; then
     echo "wrapper updated"
+    trap - EXIT HUP INT TERM
+    cleanup
     return 0
   fi
   if [ -n "$installed_commit" ]; then
     echo "error: installed wrapper is still stale after install; the local plugin cache did not refresh." >&2
     echo "hint: retry with SUPERPOWERS_INSTALL_REFRESH_MODE=remove-add" >&2
+    trap - EXIT HUP INT TERM
+    cleanup
     exit 1
   fi
   echo "error: installed wrapper not detectable, cannot confirm refresh; verify with 'codex plugin list --json'." >&2
+  trap - EXIT HUP INT TERM
+  cleanup
   return 1
 }

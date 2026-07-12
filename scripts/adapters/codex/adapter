@@ -203,6 +203,38 @@ spw_codex_build() {
   fi
 }
 
+spw_codex_inspect_fingerprint() {
+  view=
+  seen_view=0
+
+  while [ "$#" -gt 0 ]; do
+    flag="$1"
+    shift
+    case "$flag" in
+      --view)
+        [ "$#" -gt 0 ] || spw_codex_argument_error "missing value for --view"
+        [ "$seen_view" -eq 0 ] || spw_codex_argument_error "duplicate flag: --view"
+        view="$1"
+        seen_view=1
+        shift
+        ;;
+      *)
+        spw_codex_argument_error "unknown flag: $flag"
+        ;;
+    esac
+  done
+
+  [ "$seen_view" -eq 1 ] || spw_codex_argument_error "missing required flag: --view"
+  [ "$view" = "fingerprint" ] || spw_codex_argument_error "unsupported inspect view: $view"
+
+  fingerprint=$(spw_installed_commit_or_empty || true)
+  if [ -n "$fingerprint" ]; then
+    spw_codex_success inspect "{\"view\":\"fingerprint\",\"fingerprint\":\"$fingerprint\"}" ""
+  else
+    spw_codex_success inspect '{"view":"fingerprint","fingerprint":null}' ""
+  fi
+}
+
 operation="${1:-}"
 [ -n "$operation" ] || spw_codex_failure build "invalid-arguments" "missing adapter operation" "" ""
 shift
@@ -210,6 +242,9 @@ shift
 case "$operation" in
   build)
     spw_codex_build "$@"
+    ;;
+  inspect)
+    spw_codex_inspect_fingerprint "$@"
     ;;
   *)
     spw_codex_emit "$operation" false '{}' "unsupported-operation" "unsupported adapter operation: $operation" "" ""

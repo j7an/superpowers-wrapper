@@ -4,6 +4,81 @@
 SPW_PLUGIN_ID="superpowers@superpowers-wrapper"
 SPW_MARKETPLACE_NAME="superpowers-wrapper"
 
+spw_find_installed_metadata() {
+  search_root="${SUPERPOWERS_INSTALLED_SEARCH_ROOT:-$HOME/.codex}"
+  find "$search_root" \
+    \( -path "*/superpowers/.superpowers-upstream.json" \
+       -o -path "*/superpowers/*/.superpowers-upstream.json" \) \
+    -type f 2>/dev/null | head -n 1
+}
+
+spw_find_installed_manifest() {
+  search_root="${SUPERPOWERS_INSTALLED_SEARCH_ROOT:-$HOME/.codex}"
+  find "$search_root" \
+    \( -path "*/superpowers/.codex-plugin/plugin.json" \
+       -o -path "*/superpowers/*/.codex-plugin/plugin.json" \) \
+    -type f 2>/dev/null | head -n 1
+}
+
+spw_codex_json_get_or_empty() {
+  file="$1"
+  key="$2"
+  [ -f "$file" ] || return 1
+  python3 - "$file" "$key" <<'PY'
+import json
+import sys
+
+path, dotted_key = sys.argv[1:]
+MAX_JSON_NESTING = 256
+
+def reject_constant(constant):
+    raise ValueError(f"non-standard numeric constant: {constant}")
+
+def nesting_exceeds_limit(value):
+    stack = [(value, 0)]
+    while stack:
+        current, depth = stack.pop()
+        if isinstance(current, dict):
+            next_depth = depth + 1
+            if next_depth > MAX_JSON_NESTING:
+                return True
+            stack.extend((child, next_depth) for child in current.values())
+        elif isinstance(current, list):
+            next_depth = depth + 1
+            if next_depth > MAX_JSON_NESTING:
+                return True
+            stack.extend((child, next_depth) for child in current)
+    return False
+
+try:
+    with open(path, "r", encoding="utf-8") as handle:
+        data = json.load(handle, parse_constant=reject_constant)
+except (OSError, UnicodeError, json.JSONDecodeError, RecursionError, ValueError):
+    sys.exit(1)
+
+if nesting_exceeds_limit(data) or not isinstance(data, dict):
+    sys.exit(1)
+
+value = data
+for part in dotted_key.split("."):
+    if not isinstance(value, dict):
+        value = ""
+        break
+    value = value.get(part, "")
+
+if value is None:
+    value = ""
+if not isinstance(value, str):
+    sys.exit(1)
+print(value)
+PY
+}
+
+spw_codex_metadata_commit_or_empty() {
+  file="$1"
+  spw_codex_json_get_or_empty "$file" "commit"
+}
+
 spw_apply_manifest_overlay() {
   manifest="$1"
   version="$2"
@@ -71,22 +146,32 @@ PY
 
 spw_manifest_short_sha_or_empty() {
   file="$1"
-  if [ ! -f "$file" ]; then
-    return 0
+  if ! version=$(spw_codex_json_get_or_empty "$file" "version"); then
+    return 1
   fi
-  version=$(spw_json_get "$file" "version")
   case "$version" in
     *+wrapper.*)
       short="${version##*.}"
       case "$short" in
-        ""|*[!0-9a-fA-F]*)
-          ;;
-        *)
+        [0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F])
           printf '%s\n' "$short"
           ;;
       esac
       ;;
   esac
+}
+
+spw_installed_commit_or_empty() {
+  installed_metadata=$(spw_find_installed_metadata || true)
+  installed_manifest=$(spw_find_installed_manifest || true)
+  installed_commit=""
+  if [ -n "$installed_metadata" ]; then
+    installed_commit=$(spw_codex_metadata_commit_or_empty "$installed_metadata" || true)
+  fi
+  if [ -z "$installed_commit" ] && [ -n "$installed_manifest" ]; then
+    installed_commit=$(spw_manifest_short_sha_or_empty "$installed_manifest" || true)
+  fi
+  printf '%s\n' "$installed_commit"
 }
 
 spw_codex_emit() {

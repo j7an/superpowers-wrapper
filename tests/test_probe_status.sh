@@ -12,6 +12,8 @@ test "$(spw_status_for_commits "$desired" "" "")" = "needs prepare"
 test "$(spw_status_for_commits "$desired" "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" "")" = "needs prepare"
 test "$(spw_status_for_commits "$desired" "$desired" "")" = "needs install"
 test "$(spw_status_for_commits "$desired" "$desired" "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")" = "needs install"
+test "$(spw_status_for_commits "$desired" "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" "$desired")" = "needs prepare"
+test "$(spw_status_for_commits "$desired" "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" "896224c")" = "needs prepare"
 test "$(spw_status_for_commits "$desired" "$desired" "$desired")" = "current"
 test "$(spw_status_for_commits "$desired" "$desired" "896224c")" = "current"
 
@@ -50,3 +52,5 @@ assert_manifest_short "0.0.0+wrapper.896224c" "896224c"
 # The template's placeholder version is not a real fingerprint -> empty.
 assert_manifest_short "0.0.0+wrapper.template" ""
 assert_manifest_short "6.0.3+wrapper.abcxyz1" ""
+
+echo "test_probe_status: OK"
