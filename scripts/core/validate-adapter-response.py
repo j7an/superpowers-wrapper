@@ -56,9 +56,18 @@ def require_exact_keys(value: dict[str, object], expected: set[str], label: str)
         )
 
 
+def contains_terminal_control(value: str) -> bool:
+    return any(
+        ord(character) < 0x20 or 0x7F <= ord(character) <= 0x9F
+        for character in value
+    )
+
+
 def require_non_empty_string(value: object, label: str) -> str:
     if not isinstance(value, str) or not value or "\n" in value or "\r" in value:
         raise ProtocolError(f"{label} must be a non-empty single-line string")
+    if contains_terminal_control(value):
+        raise ProtocolError(f"{label} must not contain terminal control characters")
     return value
 
 

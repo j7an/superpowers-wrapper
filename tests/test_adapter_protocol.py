@@ -235,6 +235,76 @@ class AdapterProtocolValidatorTests(unittest.TestCase):
         self.assertIsNone(result.validated_result)
         self.assertNotIn("Traceback", result.stderr)
 
+    def test_rejects_terminal_controls_in_terminal_facing_protocol_strings(self) -> None:
+        failure = envelope("install", {}, ok=False)
+        invalid_cases = (
+            (
+                "messages[0].text",
+                {
+                    **envelope("build", {}),
+                    "messages": [{"channel": "stdout", "text": "unsafe\x1b"}],
+                },
+                "build",
+                0,
+            ),
+            (
+                "error.code",
+                {
+                    **failure,
+                    "error": {
+                        "code": "unsafe\x9b",
+                        "message": "controlled failure",
+                        "hints": [],
+                    },
+                },
+                "install",
+                1,
+            ),
+            (
+                "error.message",
+                {
+                    **failure,
+                    "error": {
+                        "code": "controlled-failure",
+                        "message": "unsafe\x1b",
+                        "hints": [],
+                    },
+                },
+                "install",
+                1,
+            ),
+            (
+                "error.hints[0]",
+                {
+                    **failure,
+                    "error": {
+                        "code": "controlled-failure",
+                        "message": "controlled failure",
+                        "hints": ["unsafe\x85"],
+                    },
+                },
+                "install",
+                1,
+            ),
+            (
+                "verification_hints.missing",
+                envelope(
+                    "install",
+                    {"verification_hints": {"missing": "unsafe\x1b"}},
+                ),
+                "install",
+                0,
+            ),
+        )
+        for label, payload, operation, adapter_exit in invalid_cases:
+            with self.subTest(label=label):
+                self.assert_invalid(
+                    payload,
+                    operation=operation,
+                    adapter_exit=adapter_exit,
+                    fragment=f"{label} must not contain terminal control characters",
+                )
+
     def test_rejects_empty_malformed_non_object_and_extra_fields(self) -> None:
         invalid_json_cases = (
             ("", "Expecting value"),

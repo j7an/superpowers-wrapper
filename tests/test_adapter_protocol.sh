@@ -12,6 +12,7 @@ trap 'rm -rf "$tmpdir"' EXIT INT TERM
 SPW_ADAPTER="$root/tests/fixtures/fake-adapter"
 [ "$SPW_ADAPTER_RESPONSE_VALIDATOR" = "$root/scripts/core/validate-adapter-response.py" ]
 grep -Fxq 'from __future__ import annotations' "$SPW_ADAPTER_RESPONSE_VALIDATOR"
+python3 -S "$root/tests/test_adapter_protocol.py"
 
 system_python=/usr/bin/python3
 if [ -x "$system_python" ]; then
