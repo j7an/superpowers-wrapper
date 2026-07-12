@@ -2,7 +2,9 @@
 set -eu
 
 root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
-. "$root/scripts/lib.sh"
+. "$root/scripts/core/common.sh"
+. "$root/scripts/core/provenance.sh"
+. "$root/scripts/core/status.sh"
 
 desired="896224c4b1879920ab573417e68fd51d2ccc9072"
 
@@ -32,7 +34,7 @@ assert_manifest_short() {
   "version": "$version"
 }
 JSON
-  actual=$(spw_manifest_short_sha_or_empty "$tmpdir/plugin/.codex-plugin/plugin.json")
+  actual=$( . "$root/scripts/lib.sh"; spw_manifest_short_sha_or_empty "$tmpdir/plugin/.codex-plugin/plugin.json")
   if [ "$actual" != "$expected" ]; then
     echo "unexpected manifest short sha for $version: $actual (expected $expected)" >&2
     exit 1

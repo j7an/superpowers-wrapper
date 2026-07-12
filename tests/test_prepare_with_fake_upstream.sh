@@ -353,7 +353,7 @@ assert_rejected_manifest_input "deeply-nested-json" "out-deeply-nested" "JSON ne
 unreadable_json="$tmpdir/json-directory"
 mkdir "$unreadable_json"
 printf 'sentinel\n' > "$unreadable_json/sentinel"
-if ( . "$root/scripts/lib.sh"; spw_json_get "$unreadable_json" version ) \
+if ( . "$root/scripts/core/common.sh"; . "$root/scripts/core/provenance.sh"; spw_json_get "$unreadable_json" version ) \
   >"$tmpdir/unreadable-json.out" 2>"$tmpdir/unreadable-json.err"; then
   echo "JSON helper unexpectedly accepted an unreadable file" >&2
   exit 1
