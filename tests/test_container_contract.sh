@@ -18,7 +18,12 @@ grep -Fq '"@types/node": "24.13.3"' "$tools"
 grep -Fq -- '--network none' "$runner"
 grep -Fq -- '--read-only' "$runner"
 grep -Fq -- '--tmpfs /home/spw:rw,nosuid,size=128m,uid=10001,gid=10001' "$runner"
-grep -Fq 'suite)' "$runner"
 grep -Fq 'codex-spike)' "$runner"
+
+ruby - "$runner" <<'RUBY'
+runner = File.read(ARGV.fetch(0))
+suite = /suite\)\s+sh tests\/run\.sh\s+exec sh tests\/container\/codex-offline-probe\.sh\s+;;/
+raise "suite mode must run the inner suite and then the offline Codex probe" unless runner.match?(suite)
+RUBY
 
 echo "test_container_contract: OK"

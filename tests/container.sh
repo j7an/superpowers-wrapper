@@ -7,7 +7,10 @@ image="superpowers-wrapper-test:local"
 if [ "${1:-}" = "--inside" ]; then
   mode="${2:-suite}"
   case "$mode" in
-    suite) exec sh tests/run.sh ;;
+    suite)
+      sh tests/run.sh
+      exec sh tests/container/codex-offline-probe.sh
+      ;;
     codex-spike) exec sh tests/container/codex-offline-probe.sh ;;
     *) echo "error: unknown container test mode: $mode" >&2; exit 2 ;;
   esac
