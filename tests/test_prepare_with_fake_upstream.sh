@@ -45,6 +45,9 @@ required = os.path.join(plugin_root, ".codex-plugin", "plugin.template.json")
 if not os.path.isfile(required):
     print(f"additional validator did not receive complete candidate: {required}", file=sys.stderr)
     sys.exit(1)
+if any(name.startswith(".adapter-build") for _, dirs, _ in os.walk(plugin_root) for name in dirs):
+    print("adapter build scratch leaked into the exact candidate", file=sys.stderr)
+    sys.exit(1)
 
 with open(os.environ["SUPERPOWERS_FAKE_VALIDATOR_LOG"], "a", encoding="utf-8") as handle:
     handle.write(plugin_root + "\n")
@@ -364,8 +367,9 @@ relative_workdir_physical=$(CDPATH= cd -- "$relative_workdir" && pwd -P)
     sh "$root/scripts/prepare" >/dev/null
 )
 grep -Fq \
-  "build --upstream-root $relative_workdir_physical/cache-relative/superpowers --candidate-root $relative_workdir_physical/.superpowers.tmp." \
+  "build --upstream-root $relative_workdir_physical/cache-relative/superpowers --candidate-root $relative_workdir_physical/.superpowers.prepare." \
   "$relative_adapter_log"
+grep -Fq "/superpowers --requested-ref" "$relative_adapter_log"
 test -f "$relative_workdir/out-relative/.codex-plugin/plugin.json"
 test -f "$relative_workdir/out-relative/.superpowers-upstream.json"
 
@@ -530,11 +534,10 @@ if SUPERPOWERS_REF="invalid-skill" \
   exit 1
 fi
 grep -Fq "exactly one top-level \`description:\`" "$tmpdir/invalid-skill.err"
-prepare_pid=$(cat "$prepare_pid_file")
-[ ! -e "$tmpdir/.superpowers.tmp.$prepare_pid" ] || {
+if find "$tmpdir" -maxdepth 1 -name '.superpowers.prepare.*' -print | grep -q .; then
   echo "built-in failure must remove its staged plugin tree" >&2
   exit 1
-}
+fi
 [ -f "$unrelated_tmp/sentinel" ] || {
   echo "built-in failure must not remove another invocation's staged tree" >&2
   exit 1

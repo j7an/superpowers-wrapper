@@ -90,7 +90,14 @@ spw_codex_append_message_text() {
   messages_file="$1"
   channel="$2"
   text="$3"
-  printf '%s\t%s\n' "$channel" "$text" >> "$messages_file"
+  python3 - "$messages_file" "$channel" "$text" <<'PY'
+import sys
+
+path, channel, text = sys.argv[1:]
+escaped = text.encode("unicode_escape").decode("ascii")
+with open(path, "a", encoding="utf-8") as handle:
+    handle.write(f"{channel}\t{escaped}\n")
+PY
 }
 
 spw_codex_build() {
@@ -195,7 +202,10 @@ spw_codex_build() {
   validator="$root/scripts/adapters/codex/validate-generated-plugin.py"
   [ -f "$validator" ] || spw_codex_failure build "build-failed" "missing built-in plugin validator: $validator" "" ""
 
-  scratch="$candidate_root/.codex-plugin/.adapter-build.$$"
+  tmp_parent="${TMPDIR:-/tmp}"
+  if ! scratch=$(mktemp -d "$tmp_parent/superpowers-wrapper.adapter-build.XXXXXX"); then
+    spw_codex_failure build "build-failed" "cannot create adapter build workspace under $tmp_parent" "" ""
+  fi
   stdout_file="$scratch/stdout"
   stderr_file="$scratch/stderr"
   messages_file="$scratch/messages"
@@ -212,7 +222,7 @@ spw_codex_build() {
   trap 'exit 130' INT
   trap 'exit 143' TERM
 
-  mkdir -p "$scratch" "$candidate_root/.codex-plugin"
+  mkdir -p "$candidate_root/.codex-plugin"
   : > "$messages_file"
 
   upstream_manifest="$upstream_root/.codex-plugin/plugin.json"
@@ -291,7 +301,10 @@ spw_codex_install() {
     *) spw_codex_failure install "invalid-arguments" "unsupported SUPERPOWERS_INSTALL_REFRESH_MODE: $refresh_mode" "" "" ;;
   esac
 
-  scratch="${TMPDIR:-/tmp}/.superpowers.adapter-install.$$"
+  tmp_parent="${TMPDIR:-/tmp}"
+  if ! scratch=$(mktemp -d "$tmp_parent/superpowers-wrapper.adapter-install.XXXXXX"); then
+    spw_codex_failure install "install-failed" "cannot create adapter install workspace under $tmp_parent" "" ""
+  fi
   stdout_file="$scratch/stdout"
   stderr_file="$scratch/stderr"
   messages_file="$scratch/messages"
@@ -307,7 +320,6 @@ spw_codex_install() {
   trap 'exit 130' INT
   trap 'exit 143' TERM
 
-  mkdir -p "$scratch"
   : > "$messages_file"
   : > "$hints_file"
 
@@ -325,9 +337,15 @@ spw_codex_install() {
     if ! spw_codex_capture_command "$messages_file" "$stdout_file" "$stderr_file" "$codex_bin" plugin marketplace add "$package_root"; then
       spw_codex_failure install "install-failed" "codex marketplace add failed for $package_root" "$hints_file" "$messages_file"
     fi
-  elif [ "$(spw_paths_equal "$package_root" "$registered_root")" = different ]; then
-    printf 'stdout\tmarketplace %s registered at %s; re-registering at %s\n' \
-      "$SPW_MARKETPLACE_NAME" "$registered_root" "$package_root" >> "$messages_file"
+  else
+    if ! path_relation=$(spw_paths_equal "$package_root" "$registered_root"); then
+      spw_codex_failure install "install-failed" "cannot compare registered and requested marketplace roots" "$hints_file" "$messages_file"
+    fi
+    case "$path_relation" in
+      same) ;;
+      different)
+    spw_codex_append_message_text "$messages_file" stdout \
+      "marketplace $SPW_MARKETPLACE_NAME registered at $registered_root; re-registering at $package_root"
     if ! spw_codex_capture_command "$messages_file" "$stdout_file" "$stderr_file" "$codex_bin" plugin marketplace remove "$SPW_MARKETPLACE_NAME"; then
       spw_codex_failure install "install-failed" "codex marketplace remove failed for $SPW_MARKETPLACE_NAME (registered at $registered_root)" "$hints_file" "$messages_file"
     fi
@@ -336,6 +354,11 @@ spw_codex_install() {
       printf 'previous root (last known good): %s\n' "$registered_root" >> "$hints_file"
       spw_codex_failure install "install-failed" "marketplace $SPW_MARKETPLACE_NAME was removed but re-adding failed." "$hints_file" "$messages_file"
     fi
+        ;;
+      *)
+        spw_codex_failure install "install-failed" "invalid marketplace path comparison result" "$hints_file" "$messages_file"
+        ;;
+    esac
   fi
 
   if [ "$refresh_mode" = remove-add ]; then
@@ -402,7 +425,10 @@ spw_codex_uninstall() {
   spw_require_command python3
   spw_codex_require_command uninstall "$codex_bin"
 
-  scratch="${TMPDIR:-/tmp}/.superpowers.adapter-uninstall.$$"
+  tmp_parent="${TMPDIR:-/tmp}"
+  if ! scratch=$(mktemp -d "$tmp_parent/superpowers-wrapper.adapter-uninstall.XXXXXX"); then
+    spw_codex_failure uninstall "uninstall-failed" "cannot create adapter uninstall workspace under $tmp_parent" "" ""
+  fi
   stdout_file="$scratch/stdout"
   stderr_file="$scratch/stderr"
   messages_file="$scratch/messages"
@@ -417,7 +443,6 @@ spw_codex_uninstall() {
   trap 'exit 130' INT
   trap 'exit 143' TERM
 
-  mkdir -p "$scratch"
   : > "$messages_file"
 
   if [ "$plugin_present" = true ]; then
@@ -478,7 +503,10 @@ spw_codex_inspect() {
       spw_require_command python3
       spw_codex_require_command inspect "$codex_bin"
 
-      scratch="${TMPDIR:-/tmp}/.superpowers.adapter-inspect.$$"
+      tmp_parent="${TMPDIR:-/tmp}"
+      if ! scratch=$(mktemp -d "$tmp_parent/superpowers-wrapper.adapter-inspect.XXXXXX"); then
+        spw_codex_failure inspect "inspect-failed" "cannot create adapter inspect workspace under $tmp_parent" "" ""
+      fi
       stderr_file="$scratch/stderr"
       messages_file="$scratch/messages"
       cleanup() {
@@ -492,7 +520,6 @@ spw_codex_inspect() {
       trap 'exit 130' INT
       trap 'exit 143' TERM
 
-      mkdir -p "$scratch"
       : > "$messages_file"
 
       : > "$stderr_file"
@@ -526,7 +553,7 @@ spw_codex_inspect() {
 }
 
 operation="${1:-}"
-[ -n "$operation" ] || spw_codex_failure build "invalid-arguments" "missing adapter operation" "" ""
+[ -n "$operation" ] || spw_codex_failure adapter "invalid-arguments" "missing adapter operation" "" ""
 shift
 
 case "$operation" in

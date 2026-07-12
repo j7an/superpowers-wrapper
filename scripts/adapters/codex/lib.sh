@@ -126,44 +126,6 @@ print("same" if na == nb else "different")
 PY
 }
 
-# Reconcile Codex's wrapper marketplace pointer to <current_root>:
-#   absent                     -> add
-#   same physical root         -> keep
-#   different root             -> remove, then add
-# List/parse failures abort before any marketplace change. If remove
-# succeeds and add fails, print a recovery command for the current root AND
-# the previous root so the user can restore last-known-good state. Only the
-# superpowers-wrapper marketplace is ever touched.
-spw_reconcile_marketplace() {
-  codex_bin="$1"
-  current_root="$2"
-  if ! listing=$("$codex_bin" plugin marketplace list --json 2>/dev/null); then
-    spw_die "cannot list Codex marketplaces via '$codex_bin plugin marketplace list --json'"
-  fi
-  if ! registered_root=$(spw_marketplace_root_from_json "$listing" "$SPW_MARKETPLACE_NAME"); then
-    spw_die "cannot parse output of '$codex_bin plugin marketplace list --json'"
-  fi
-  if [ -z "$registered_root" ]; then
-    if ! "$codex_bin" plugin marketplace add "$current_root"; then
-      spw_die "codex marketplace add failed for $current_root"
-    fi
-    return 0
-  fi
-  if [ "$(spw_paths_equal "$current_root" "$registered_root")" = same ]; then
-    return 0
-  fi
-  echo "marketplace $SPW_MARKETPLACE_NAME registered at $registered_root; re-registering at $current_root"
-  if ! "$codex_bin" plugin marketplace remove "$SPW_MARKETPLACE_NAME"; then
-    spw_die "codex marketplace remove failed for $SPW_MARKETPLACE_NAME (registered at $registered_root)"
-  fi
-  if ! "$codex_bin" plugin marketplace add "$current_root"; then
-    echo "error: marketplace $SPW_MARKETPLACE_NAME was removed but re-adding failed." >&2
-    echo "recover with: $codex_bin plugin marketplace add $current_root" >&2
-    echo "previous root (last known good): $registered_root" >&2
-    exit 1
-  fi
-}
-
 spw_find_installed_metadata() {
   search_root="${SUPERPOWERS_INSTALLED_SEARCH_ROOT:-$HOME/.codex}"
   find "$search_root" \
@@ -357,6 +319,12 @@ import sys
 
 operation, ok_text, result_text, code, error_message, hints_path, messages_path = sys.argv[1:]
 
+def has_terminal_control(value):
+    return any(ord(char) < 0x20 or 0x7f <= ord(char) <= 0x9f for char in value)
+
+if any(has_terminal_control(value) for value in (operation, code, error_message)):
+    raise SystemExit("protocol strings must not contain terminal control characters")
+
 messages = []
 if messages_path:
     with open(messages_path, encoding="utf-8") as handle:
@@ -370,6 +338,7 @@ if messages_path:
                 or not text
                 or "\t" in text
                 or "\r" in text
+                or has_terminal_control(text)
             ):
                 raise SystemExit(f"invalid message record at line {number}")
             messages.append({"channel": channel, "text": text})
@@ -389,6 +358,8 @@ else:
     if hints_path:
         with open(hints_path, encoding="utf-8") as handle:
             hints = [line.rstrip("\n") for line in handle if line.rstrip("\n")]
+    if any(has_terminal_control(hint) for hint in hints):
+        raise SystemExit("protocol hints must not contain terminal control characters")
     envelope = {
         "protocol": 1,
         "operation": operation,
@@ -433,7 +404,7 @@ with messages_path.open("a", encoding="utf-8") as handle:
     for chunk in chunks:
         if not chunk:
             continue
-        text = chunk.decode("utf-8")
+        text = chunk.decode("utf-8", errors="backslashreplace")
         escaped = text.encode("unicode_escape").decode("ascii")
         if not escaped:
             continue

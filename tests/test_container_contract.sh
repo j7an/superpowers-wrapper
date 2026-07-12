@@ -22,6 +22,7 @@ grep -Fq -- '--read-only' "$runner"
 grep -Fq -- '--tmpfs /home/spw:rw,nosuid,size=128m,uid=10001,gid=10001' "$runner"
 grep -Fq 'codex-spike)' "$runner"
 grep -Fxq '.superpowers/' "$root/.dockerignore"
+grep -Fxq '.worktrees/' "$root/.dockerignore"
 
 ruby - "$runner" <<'RUBY'
 runner = File.read(ARGV.fetch(0))
@@ -45,6 +46,9 @@ unless probe.include?('install_plugin_and_assert_active "$version_b" "$commit_b"
   raise "offline probe must assert the CLI-selected B cache root and reject stale A provenance"
 end
 raise "offline probe must not accept provenance from an arbitrary cache path" if probe.include?("search_root.rglob")
+unless probe.match?(/final_plugins=\$\(run_codex plugin list --json\).*final_marketplaces=\$\(run_codex plugin marketplace list --json\)/m)
+  raise "offline probe must capture both final listings before absence assertions"
+end
 RUBY
 
 echo "test_container_contract: OK"

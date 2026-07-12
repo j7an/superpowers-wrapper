@@ -161,6 +161,8 @@ assert_marketplace_root "$moved"
 run_codex plugin remove "$plugin_id"
 run_codex plugin marketplace remove superpowers-wrapper-probe
 
-if run_codex plugin list --json | grep -Fq "$plugin_id"; then exit 1; fi
-if run_codex plugin marketplace list --json | grep -Fq 'superpowers-wrapper-probe'; then exit 1; fi
+final_plugins=$(run_codex plugin list --json)
+final_marketplaces=$(run_codex plugin marketplace list --json)
+if printf '%s\n' "$final_plugins" | grep -Fq "$plugin_id"; then exit 1; fi
+if printf '%s\n' "$final_marketplaces" | grep -Fq 'superpowers-wrapper-probe'; then exit 1; fi
 echo "codex offline probe: OK"

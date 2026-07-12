@@ -34,11 +34,30 @@ EOF
 chmod +x "$recording_adapter"
 
 tool_path="$tmpdir/tool-path"
+probe_tmp="$tmpdir/probe-tmp"
 mkdir -p "$tool_path"
-for tool in git python3 awk sed find head cut dirname pwd grep rm; do
+mkdir -p "$probe_tmp"
+for tool in git awk sed find head cut dirname pwd grep rm mktemp; do
   real=$(command -v "$tool")
   ln -sf "$real" "$tool_path/$tool"
 done
+
+# Model a pyenv/asdf-style interpreter shim whose env-based shell lookup is not
+# available in the deliberately restricted probe PATH. The test harness must
+# resolve the interpreter itself rather than copying the shell shim.
+real_python3=$(python3 -c 'import os, sys; print(os.path.realpath(sys.executable))')
+mkdir -p "$tmpdir/python-shims"
+cat > "$tmpdir/python-shims/python3" <<EOF
+#!/usr/bin/env sh
+exec "$real_python3" "\$@"
+EOF
+chmod +x "$tmpdir/python-shims/python3"
+PATH="$tmpdir/python-shims:$PATH" python3 - "$tool_path/python3" <<'PY'
+import os
+import sys
+
+os.symlink(os.path.realpath(sys.executable), sys.argv[1])
+PY
 
 desired_commit=$(git -C "$upstream" rev-parse HEAD)
 desired_short=$(printf '%s' "$desired_commit" | cut -c 1-7)
@@ -79,11 +98,20 @@ assert_probe_porcelain() {
 
 run_probe() {
   PATH="$tool_path" \
+  TMPDIR="$probe_tmp" \
   SUPERPOWERS_REF="$desired_commit" \
   SUPERPOWERS_UPSTREAM_URL="$upstream" \
   SUPERPOWERS_INSTALLED_SEARCH_ROOT="$tmpdir/codex-home" \
   SPW_ADAPTER="$recording_adapter" \
   /bin/sh "$pkg/scripts/probe" --porcelain
+}
+
+assert_probe_tmp_empty() {
+  if find "$probe_tmp" -mindepth 1 -print | grep -q .; then
+    echo "probe leaked its invocation workspace or adapter sidecars" >&2
+    find "$probe_tmp" -mindepth 1 -print >&2
+    exit 1
+  fi
 }
 
 # Scenario 1: malformed installed metadata falls back to the manifest short SHA,
@@ -95,6 +123,7 @@ write_installed_manifest "0.0.0+wrapper.$desired_short"
 output=$(run_probe)
 assert_probe_porcelain "$desired_short" "current" "$output"
 grep -Fxq "inspect --view fingerprint" "$adapter_log"
+assert_probe_tmp_empty
 
 # Scenario 1b: semantically invalid metadata falls through to a valid manifest
 # fingerprint instead of poisoning the protocol response.
@@ -104,6 +133,7 @@ write_installed_manifest "0.0.0+wrapper.$desired_short"
 output=$(run_probe)
 assert_probe_porcelain "$desired_short" "current" "$output"
 grep -Fxq "inspect --view fingerprint" "$adapter_log"
+assert_probe_tmp_empty
 
 # Scenario 2: semantically invalid metadata plus malformed manifest -> null
 # fingerprint and needs install when generated is current.
@@ -113,6 +143,7 @@ printf '%s\n' '{' > "$installed_root/.codex-plugin/plugin.json"
 output=$(run_probe)
 assert_probe_porcelain "" "needs install" "$output"
 grep -Fxq "inspect --view fingerprint" "$adapter_log"
+assert_probe_tmp_empty
 
 # Scenario 2b: semantically invalid metadata with no manifest also yields null.
 rm -f "$installed_root/.codex-plugin/plugin.json"
@@ -120,6 +151,7 @@ rm -f "$installed_root/.codex-plugin/plugin.json"
 output=$(run_probe)
 assert_probe_porcelain "" "needs install" "$output"
 grep -Fxq "inspect --view fingerprint" "$adapter_log"
+assert_probe_tmp_empty
 
 # Scenario 3: stale generated metadata still wins over a null installed
 # fingerprint and keeps the status at needs prepare.
@@ -128,6 +160,7 @@ write_generated_metadata "0000000000000000000000000000000000000000"
 output=$(run_probe)
 assert_probe_porcelain "" "needs prepare" "$output"
 grep -Fxq "inspect --view fingerprint" "$adapter_log"
+assert_probe_tmp_empty
 
 # Scenario 4: malformed generated provenance is treated as absent so probe can
 # report needs prepare instead of aborting the remediation path.
@@ -139,5 +172,6 @@ printf '%s\n' "$output" | grep -Fxq "generated_commit="
 printf '%s\n' "$output" | grep -Fxq "installed_commit="
 printf '%s\n' "$output" | grep -Fxq "status=needs prepare"
 grep -Fxq "inspect --view fingerprint" "$adapter_log"
+assert_probe_tmp_empty
 
 echo "test_probe_commands: OK"

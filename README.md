@@ -80,6 +80,11 @@ after the built-in check. It receives the candidate plugin root as its only
 argument. It cannot replace or bypass built-in validation, and either check
 failing prevents the tree swap and all Codex mutation.
 
+Direct `scripts/install` keeps harness-specific validation in the Codex adapter:
+phase 1 prepares the exact candidate first, then the adapter performs its Codex
+and refresh-mode preflight before any Codex mutation. The Node dispatcher keeps
+its existing Codex preflight before dispatching to the shell lifecycle.
+
 ## Quick start
 
 ```sh
@@ -234,7 +239,7 @@ host-side fixtures, and they perform no mutation of the developer's or runner's
 real Codex state.
 
 Layer 4 is the Docker acceptance path. It is the required completion command
-because Task 1's isolated-container Codex probe graduated from a temporary
+because the isolated-container Codex probe graduated from a temporary
 nonblocking spike to a blocking acceptance gate. `sh tests/container.sh` runs
 the inner `sh tests/run.sh` suite and then the real Codex offline probe inside
 an isolated container home with networking disabled. That container run may

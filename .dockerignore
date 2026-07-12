@@ -2,6 +2,7 @@
 .cache
 node_modules
 .superpowers/
+.worktrees/
 *.tgz
 docs/superpowers
 plugins/superpowers/**

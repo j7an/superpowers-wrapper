@@ -16,6 +16,8 @@ fi
 
 state="$tmpdir/state"
 mkdir -p "$state"
+uninstall_tmp="$tmpdir/uninstall-tmp"
+mkdir -p "$uninstall_tmp"
 fake_codex="$tmpdir/codex"
 recording_adapter="$tmpdir/adapter"
 log="$state/codex.log"
@@ -80,13 +82,21 @@ reset() {
 }
 
 run_uninstall() {
-  SPW_ADAPTER="$recording_adapter" SUPERPOWERS_CODEX="$fake_codex" sh "$root/scripts/uninstall"
+  TMPDIR="$uninstall_tmp" SPW_ADAPTER="$recording_adapter" SUPERPOWERS_CODEX="$fake_codex" sh "$root/scripts/uninstall"
 }
 
 expect_fail() {
-  if SPW_ADAPTER="$recording_adapter" SUPERPOWERS_CODEX="$fake_codex" sh "$root/scripts/uninstall" >"$state/out" 2>&1; then
+  if TMPDIR="$uninstall_tmp" SPW_ADAPTER="$recording_adapter" SUPERPOWERS_CODEX="$fake_codex" sh "$root/scripts/uninstall" >"$state/out" 2>&1; then
     echo "expected uninstall to fail but it succeeded" >&2
     cat "$state/out" >&2
+    exit 1
+  fi
+}
+
+assert_uninstall_tmp_empty() {
+  if find "$uninstall_tmp" -mindepth 1 -print | grep -q .; then
+    echo "uninstall leaked its invocation workspace or adapter sidecars" >&2
+    find "$uninstall_tmp" -mindepth 1 -print >&2
     exit 1
   fi
 }
@@ -159,6 +169,7 @@ reset
 printf '%s\n' "$plugin_present" > "$state/plugin_list.json"
 printf '%s\n' "$marketplace_present" > "$state/marketplace_list.json"
 run_uninstall >/dev/null
+assert_uninstall_tmp_empty
 grep -Fxq "inspect --view ownership" "$adapter_log"
 grep -Fxq "uninstall --plugin-present true --marketplace-present true" "$adapter_log"
 [ "$(grep -Fc "inspect --view ownership" "$adapter_log")" -eq 2 ]
@@ -211,6 +222,7 @@ printf '%s\n' "$plugin_present" > "$state/plugin_list.json"
 printf '%s\n' "$marketplace_present" > "$state/marketplace_list.json"
 printf '1\n' > "$state/plugin_list.rc"
 expect_fail
+assert_uninstall_tmp_empty
 if grep -Fq "uninstall --" "$adapter_log"; then
   echo "adapter uninstall must not run when ownership inspection fails" >&2
   cat "$adapter_log" >&2

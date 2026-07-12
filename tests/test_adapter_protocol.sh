@@ -109,11 +109,13 @@ if [ "$1" = plugin ] && [ "$2" = marketplace ] && [ "$3" = list ]; then
 fi
 if [ "$1" = plugin ] && [ "$2" = marketplace ] && [ "$3" = add ]; then
   printf '%b' 'marketplace-out\\literal\ttag\rdone\n'
+  printf '\377non-utf-marketplace\n'
   printf '%b' 'marketplace-err\\literal\ttag\rdone\n' >&2
   exit 0
 fi
 if [ "$1" = plugin ] && [ "$2" = add ]; then
   printf '%b' 'plugin-out\\literal\ttag\rdone\n'
+  printf '\376non-utf-plugin\n'
   printf '%b' 'plugin-err\\literal\ttag\rdone\n' >&2
   if [ "$scenario" = install-failure-after-mutation ]; then
     exit 1
@@ -150,6 +152,9 @@ grep -Fxq 'marketplace-out\\literal\ttag\rdone' "$RUN_STDERR"
 grep -Fxq 'marketplace-err\\literal\ttag\rdone' "$RUN_STDERR"
 grep -Fxq 'plugin-out\\literal\ttag\rdone' "$RUN_STDERR"
 grep -Fxq 'plugin-err\\literal\ttag\rdone' "$RUN_STDERR"
+grep -Fxq '\\xffnon-utf-marketplace' "$RUN_STDERR"
+grep -Fxq '\\xfenon-utf-plugin' "$RUN_STDERR"
+[ "$(wc -l < "$RUN_RESULT.response" | tr -d ' ')" -eq 1 ]
 if grep -Fq 'error: invalid adapter response:' "$RUN_STDERR"; then
   echo "escaped Codex output must not poison a successful install envelope" >&2
   exit 1
@@ -160,6 +165,35 @@ run_real_install install-failure-after-mutation
 [ ! -f "$RUN_RESULT" ]
 grep -Fxq 'plugin-out\\literal\ttag\rdone' "$RUN_STDERR"
 grep -Fxq 'plugin-err\\literal\ttag\rdone' "$RUN_STDERR"
+grep -Fxq '\\xfenon-utf-plugin' "$RUN_STDERR"
+[ "$(wc -l < "$RUN_RESULT.response" | tr -d ' ')" -eq 1 ]
+if grep -Fq 'Traceback' "$RUN_STDERR"; then
+  echo "non-UTF Codex output must not produce a traceback" >&2
+  exit 1
+fi
+
+# Protocol strings are terminal-facing. Reject C0/C1 controls rather than
+# serializing an envelope that could inject terminal behavior when replayed.
+control=$(printf '\033')
+control_out="$tmpdir/control.out"
+control_err="$tmpdir/control.err"
+if "$root/scripts/adapters/codex/adapter" install "--bad-$control" \
+  >"$control_out" 2>"$control_err"; then
+  echo "terminal control in an adapter error must be rejected" >&2
+  exit 1
+fi
+[ ! -s "$control_out" ]
+grep -Fq 'protocol strings must not contain terminal control characters' "$control_err"
+
+# A zero-argument adapter failure must identify the adapter boundary, not
+# falsely claim that the build operation ran.
+zero_out="$tmpdir/zero-argument.out"
+if "$root/scripts/adapters/codex/adapter" >"$zero_out" 2>/dev/null; then
+  echo "zero-argument adapter invocation must fail" >&2
+  exit 1
+fi
+[ "$(spw_json_get "$zero_out" operation)" = adapter ]
+[ "$(spw_json_get "$zero_out" error.code)" = invalid-arguments ]
 grep -Fxq 'error: codex plugin add failed for superpowers@superpowers-wrapper' "$RUN_STDERR"
 if grep -Fq 'error: invalid adapter response:' "$RUN_STDERR"; then
   echo "escaped Codex output must not poison a controlled failure envelope" >&2

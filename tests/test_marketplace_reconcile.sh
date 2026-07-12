@@ -76,11 +76,19 @@ ln -s "$tmpdir/real" "$tmpdir/link"
 [ "$(spw_paths_equal /no/such/path-a /no/such/path-a)" = same ]
 [ "$(spw_paths_equal /no/such/path-a /no/such/path-b)" = different ]
 
-# --- spw_reconcile_marketplace ---
+# The legacy core reconciliation helper must stay deleted: reconciliation is an
+# adapter-owned behavior and tests below exercise the shipped adapter directly.
+if command -v spw_reconcile_marketplace >/dev/null 2>&1; then
+  echo "dead core reconciliation helper must not remain defined" >&2
+  exit 1
+fi
+
+# --- shipped Codex adapter marketplace reconciliation ---
 # Record every fake Codex invocation so reconciliation assertions cover the
 # exact command order and ensure only the wrapper marketplace can be mutated.
 fake_log="$tmpdir/codex-commands.log"
 fake_codex="$tmpdir/fake-codex"
+mkdir -p "$tmpdir/requested"
 cat > "$fake_codex" <<'SH'
 #!/bin/sh
 set -eu
@@ -103,6 +111,12 @@ fi
 if [ "$1 $2 $3" = "plugin marketplace remove" ]; then
   exit "${FAKE_CODEX_REMOVE_EXIT:-0}"
 fi
+if [ "$1 $2" = "plugin add" ]; then
+  exit 0
+fi
+if [ "$1 $2" = "plugin remove" ]; then
+  exit 0
+fi
 echo "unexpected fake Codex command: $*" >&2
 exit 99
 SH
@@ -111,7 +125,7 @@ export FAKE_CODEX_LOG="$fake_log"
 
 assert_exact_commands() {
   expected="$1"
-  actual=$(cat "$fake_log")
+  actual=$(grep '^plugin marketplace ' "$fake_log" || true)
   [ "$actual" = "$expected" ] || {
     echo "unexpected Codex commands:" >&2
     printf 'expected:\n%s\nactual:\n%s\n' "$expected" "$actual" >&2
@@ -127,10 +141,18 @@ assert_no_mutation() {
   fi
 }
 
+run_shipped_install() {
+  result="$tmpdir/adapter-result.json"
+  rm -f "$result" "$result.response"
+  SPW_ADAPTER="$root/scripts/adapters/codex/adapter" \
+  SUPERPOWERS_CODEX="$fake_codex" \
+    spw_adapter_install "$result" "$tmpdir/requested"
+}
+
 assert_reconcile_fails_without_mutation() {
   label="$1"
   : > "$fake_log"
-  if (spw_reconcile_marketplace "$fake_codex" "$tmpdir/requested") >"$tmpdir/$label.out" 2>&1; then
+  if (run_shipped_install) >"$tmpdir/$label.out" 2>&1; then
     echo "$label must fail" >&2
     exit 1
   fi
@@ -173,14 +195,14 @@ for unrelated_root_case in \
 do
   FAKE_CODEX_LIST_OUTPUT=$unrelated_root_case
   : > "$fake_log"
-  spw_reconcile_marketplace "$fake_codex" "$tmpdir/requested"
+  run_shipped_install >/dev/null
   assert_exact_commands "plugin marketplace list --json
 plugin marketplace add $tmpdir/requested"
 done
 
 FAKE_CODEX_LIST_OUTPUT='{"marketplaces":[{"name":"openai-curated","root":"/other"}]}'
 : > "$fake_log"
-spw_reconcile_marketplace "$fake_codex" "$tmpdir/requested"
+run_shipped_install >/dev/null
 assert_exact_commands "plugin marketplace list --json
 plugin marketplace add $tmpdir/requested"
 ! grep -Fq openai-curated "$fake_log"
@@ -189,14 +211,18 @@ mkdir -p "$tmpdir/registered-root"
 ln -s "$tmpdir/registered-root" "$tmpdir/registered-root-link"
 FAKE_CODEX_LIST_OUTPUT=$(printf '{"marketplaces":[{"name":"openai-curated","root":"/other"},{"name":"superpowers-wrapper","root":"%s"}]}' "$tmpdir/registered-root-link")
 : > "$fake_log"
-spw_reconcile_marketplace "$fake_codex" "$tmpdir/registered-root"
+result="$tmpdir/adapter-result.json"
+SPW_ADAPTER="$root/scripts/adapters/codex/adapter" SUPERPOWERS_CODEX="$fake_codex" \
+  spw_adapter_install "$result" "$tmpdir/registered-root" >/dev/null
 assert_exact_commands "plugin marketplace list --json"
 assert_no_mutation
 
 mkdir -p "$tmpdir/old-root" "$tmpdir/new-root"
 FAKE_CODEX_LIST_OUTPUT=$(printf '{"marketplaces":[{"name":"openai-curated","root":"/other"},{"name":"superpowers-wrapper","root":"%s"}]}' "$tmpdir/old-root")
 : > "$fake_log"
-spw_reconcile_marketplace "$fake_codex" "$tmpdir/new-root"
+result="$tmpdir/adapter-result.json"
+SPW_ADAPTER="$root/scripts/adapters/codex/adapter" SUPERPOWERS_CODEX="$fake_codex" \
+  spw_adapter_install "$result" "$tmpdir/new-root" >/dev/null
 assert_exact_commands "plugin marketplace list --json
 plugin marketplace remove superpowers-wrapper
 plugin marketplace add $tmpdir/new-root"
@@ -205,7 +231,8 @@ plugin marketplace add $tmpdir/new-root"
 FAKE_CODEX_ADD_EXIT=23
 export FAKE_CODEX_ADD_EXIT
 : > "$fake_log"
-if (spw_reconcile_marketplace "$fake_codex" "$tmpdir/new-root") >"$tmpdir/failed-add.out" 2>&1; then
+if (SPW_ADAPTER="$root/scripts/adapters/codex/adapter" SUPERPOWERS_CODEX="$fake_codex" \
+  spw_adapter_install "$tmpdir/adapter-result.json" "$tmpdir/new-root") >"$tmpdir/failed-add.out" 2>&1; then
   echo "failed re-add must return nonzero" >&2
   exit 1
 fi
@@ -216,6 +243,63 @@ plugin marketplace add $tmpdir/new-root"
 grep -Fq "$tmpdir/old-root" "$tmpdir/failed-add.out"
 grep -Fq "$tmpdir/new-root" "$tmpdir/failed-add.out"
 grep -Fq "recover with:" "$tmpdir/failed-add.out"
+
+FAKE_CODEX_REMOVE_EXIT=29
+export FAKE_CODEX_REMOVE_EXIT
+: > "$fake_log"
+if (SPW_ADAPTER="$root/scripts/adapters/codex/adapter" SUPERPOWERS_CODEX="$fake_codex" \
+  spw_adapter_install "$tmpdir/adapter-result.json" "$tmpdir/new-root") >"$tmpdir/failed-remove.out" 2>&1; then
+  echo "failed remove must return nonzero" >&2
+  exit 1
+fi
+unset FAKE_CODEX_REMOVE_EXIT
+assert_exact_commands "plugin marketplace list --json
+plugin marketplace remove superpowers-wrapper"
+if grep -Fq "plugin marketplace add" "$fake_log"; then
+  echo "add must not follow a failed marketplace remove" >&2
+  exit 1
+fi
+
+# Path-comparison output is a closed two-value protocol. Empty, failed, or
+# unexpected output must abort before any marketplace mutation.
+for path_result in empty failed unexpected; do
+  python_path="$tmpdir/python-path-$path_result"
+  mkdir -p "$python_path"
+  cat > "$python_path/python3" <<EOF
+#!/bin/sh
+if [ "\${1:-}" = - ]; then
+  case "\${2:-}" in
+    "$tmpdir"/*)
+    case "$path_result" in
+      empty) exit 0 ;;
+      failed) exit 9 ;;
+      unexpected) printf '%s\n' maybe; exit 0 ;;
+    esac
+    ;;
+  esac
+fi
+exec "$(command -v python3)" "\$@"
+EOF
+  chmod +x "$python_path/python3"
+  FAKE_CODEX_LIST_OUTPUT=$(printf '{"marketplaces":[{"name":"superpowers-wrapper","root":"%s"}]}' "$tmpdir/old-root")
+  export FAKE_CODEX_LIST_OUTPUT
+  : > "$fake_log"
+  if (PATH="$python_path:$PATH" SPW_ADAPTER="$root/scripts/adapters/codex/adapter" \
+      SUPERPOWERS_CODEX="$fake_codex" \
+      spw_adapter_install "$tmpdir/adapter-result.json" "$tmpdir/new-root") >/dev/null 2>&1; then
+    echo "$path_result path comparison must fail closed" >&2
+    exit 1
+  fi
+  assert_no_mutation
+done
+
+# A failed/missing ownership result must never be treated as absence.
+invalid_ownership="$tmpdir/invalid-ownership.json"
+printf '%s\n' '{}' > "$invalid_ownership"
+if (spw_verify_uninstalled_resources "$invalid_ownership") >"$tmpdir/invalid-ownership.out" 2>&1; then
+  echo "malformed ownership result must fail closed" >&2
+  exit 1
+fi
 
 # --- spw_verify_installed_fingerprint: compares the installed fingerprint to
 # the desired commit and replays only optional adapter-provided hints.

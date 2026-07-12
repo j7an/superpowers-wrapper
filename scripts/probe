@@ -17,11 +17,23 @@ desired_commit=$(printf '%s\n' "$resolved_record" | awk '{ print $3 }')
 
 generated_commit=$(spw_generated_commit_or_empty "$root")
 tmp_parent="${TMPDIR:-/tmp}"
-inspect_result="$tmp_parent/.superpowers.inspect.$$.json"
+if ! probe_workspace=$(mktemp -d "$tmp_parent/superpowers-wrapper.probe.XXXXXX"); then
+  spw_die "cannot create probe workspace under $tmp_parent"
+fi
+inspect_result="$probe_workspace/inspect.json"
 cleanup() {
-  rm -f "$inspect_result" "$inspect_result.response"
+  status=$?
+  trap - 0 HUP INT TERM
+  rm -rf "$probe_workspace" || :
+  exit "$status"
 }
-trap cleanup EXIT HUP INT TERM
+trap cleanup 0
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+TMPDIR="$probe_workspace"
+export TMPDIR
 spw_inspect_fingerprint "$inspect_result"
 installed_commit=$(spw_adapter_result_get "$inspect_result" "fingerprint")
 
@@ -42,6 +54,3 @@ else
   printf 'installed wrapper commit or fingerprint: %s\n' "${installed_commit:-not detected}"
   printf 'status: %s\n' "$status"
 fi
-
-trap - EXIT HUP INT TERM
-cleanup

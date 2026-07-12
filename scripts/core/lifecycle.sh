@@ -72,10 +72,16 @@ spw_verify_installed_fingerprint() {
 spw_verify_uninstalled_resources() {
   inspect_result="$1"
 
-  if [ "$(spw_adapter_result_boolean "$inspect_result" "resources.plugin")" = true ]; then
+  if ! plugin_present=$(spw_adapter_result_boolean "$inspect_result" "resources.plugin"); then
+    return 1
+  fi
+  if ! marketplace_present=$(spw_adapter_result_boolean "$inspect_result" "resources.marketplace"); then
+    return 1
+  fi
+  if [ "$plugin_present" = true ]; then
     spw_die "owned plugin resource is still installed after removal"
   fi
-  if [ "$(spw_adapter_result_boolean "$inspect_result" "resources.marketplace")" = true ]; then
+  if [ "$marketplace_present" = true ]; then
     spw_die "owned marketplace resource is still registered after removal"
   fi
 }
