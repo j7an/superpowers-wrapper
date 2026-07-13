@@ -229,7 +229,7 @@ SUPERPOWERS_REF=latest-release scripts/probe
 
 ```sh
 sh tests/run.sh                          # Layers 1-3: host-side hermetic checks while iterating
-sh tests/container.sh                    # Layer 4: blocking Docker acceptance command
+sh tests/container.sh                    # Layers 1-4: blocking Docker acceptance command
 sh tests/manual/codex-behavior-probe.sh  # optional native-only compatibility residue
 ```
 

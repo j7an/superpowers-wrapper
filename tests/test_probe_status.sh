@@ -54,26 +54,43 @@ assert_manifest_short "0.0.0+wrapper.896224c" "896224c"
 assert_manifest_short "0.0.0+wrapper.template" ""
 assert_manifest_short "6.0.3+wrapper.abcxyz1" ""
 
-generated_root="$tmpdir/generated-root"
-generated_metadata="$generated_root/plugins/superpowers/.superpowers-upstream.json"
-mkdir -p "$(dirname "$generated_metadata")"
+fixture_generated_root="$tmpdir/generated-root"
+fixture_generated_metadata="$fixture_generated_root/plugins/superpowers/.superpowers-upstream.json"
+mkdir -p "$(dirname "$fixture_generated_metadata")"
 
-printf '%s\n' '{' > "$generated_metadata"
-test "$(spw_generated_commit_or_empty "$generated_root")" = ""
+printf '%s\n' '{' > "$fixture_generated_metadata"
+test "$(spw_generated_commit_or_empty "$fixture_generated_root")" = ""
 
-printf '%s\n' '{"commit": 7}' > "$generated_metadata"
-test "$(spw_generated_commit_or_empty "$generated_root")" = ""
+printf '%s\n' '{"commit": 7}' > "$fixture_generated_metadata"
+test "$(spw_generated_commit_or_empty "$fixture_generated_root")" = ""
 
-printf '%s\n' '{"commit": "not-a-commit"}' > "$generated_metadata"
-test "$(spw_generated_commit_or_empty "$generated_root")" = ""
+printf '%s\n' '{"commit": "not-a-commit"}' > "$fixture_generated_metadata"
+test "$(spw_generated_commit_or_empty "$fixture_generated_root")" = ""
 
-printf '%s\n' '{"commit": "0123456789abcdef0123456789abcdef01234567"}' > "$generated_metadata"
-test "$(spw_generated_commit_or_empty "$generated_root")" = "0123456789abcdef0123456789abcdef01234567"
+printf '%s\n' '{"commit": "0123456789abcdef0123456789abcdef01234567"}' > "$fixture_generated_metadata"
+test "$(spw_generated_commit_or_empty "$fixture_generated_root")" = "0123456789abcdef0123456789abcdef01234567"
 
-chmod 000 "$generated_metadata"
-if [ ! -r "$generated_metadata" ]; then
-  test "$(spw_generated_commit_or_empty "$generated_root")" = ""
+caller_root="$root"
+generated_root="caller-generated-root-path"
+generated_metadata="caller-generated-metadata-path"
+spw_generated_metadata_path "$fixture_generated_root" > "$tmpdir/generated-metadata-path.out"
+test "$root" = "$caller_root"
+test "$generated_root" = "caller-generated-root-path"
+test "$generated_metadata" = "caller-generated-metadata-path"
+test "$(cat "$tmpdir/generated-metadata-path.out")" = "$fixture_generated_metadata"
+
+generated_root="caller-generated-root-commit"
+generated_metadata="caller-generated-metadata-commit"
+spw_generated_commit_or_empty "$fixture_generated_root" > "$tmpdir/generated-commit.out"
+test "$root" = "$caller_root"
+test "$generated_root" = "caller-generated-root-commit"
+test "$generated_metadata" = "caller-generated-metadata-commit"
+test "$(cat "$tmpdir/generated-commit.out")" = "0123456789abcdef0123456789abcdef01234567"
+
+chmod 000 "$fixture_generated_metadata"
+if [ ! -r "$fixture_generated_metadata" ]; then
+  test "$(spw_generated_commit_or_empty "$fixture_generated_root")" = ""
 fi
-chmod 600 "$generated_metadata"
+chmod 600 "$fixture_generated_metadata"
 
 echo "test_probe_status: OK"

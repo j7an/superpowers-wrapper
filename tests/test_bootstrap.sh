@@ -52,6 +52,7 @@ assert_contains "AGENTS.md" "no mutation of the developer's or runner's real Cod
 assert_contains "README.md" "sh tests/container.sh"
 assert_contains "README.md" "Layers 1-3 stay offline and hermetic"
 assert_contains "README.md" "Layer 4 is the Docker acceptance path"
+assert_contains "README.md" "sh tests/container.sh                    # Layers 1-4: blocking Docker acceptance command"
 assert_contains "README.md" "no public harness selector"
 assert_contains "RELEASING.md" 'Ensure `main` is green (`sh tests/container.sh`)'
 assert_contains "RELEASING.md" "sh tests/container.sh"

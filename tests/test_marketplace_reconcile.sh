@@ -334,4 +334,19 @@ if grep -Fq "wrapper updated" "$tmpdir/undetectable.out"; then
   echo "undetectable installed metadata must not print success" >&2; exit 1
 fi
 
+spw_inspect_fingerprint() {
+  printf '%s\n' '{' > "$1"
+}
+if spw_verify_installed_fingerprint "$desired" "$install_result" "$inspect_result" \
+  > "$tmpdir/malformed-inspection.out" 2>&1; then
+  echo "malformed fingerprint inspection result must fail" >&2
+  exit 1
+fi
+grep -Fq "parse" "$tmpdir/malformed-inspection.out"
+if grep -Fq "fingerprint is not detectable" "$tmpdir/malformed-inspection.out" ||
+   grep -Fq "wrapper updated" "$tmpdir/malformed-inspection.out"; then
+  echo "malformed fingerprint result must not be reported as absence or success" >&2
+  exit 1
+fi
+
 echo "test_marketplace_reconcile: OK"
