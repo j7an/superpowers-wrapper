@@ -58,6 +58,16 @@ function resolvePackageRoot(scriptPath) {
 }
 
 /**
+ * @param {string} moduleFilename
+ * @param {string | undefined} argvPath
+ * @returns {boolean}
+ */
+function isMain(moduleFilename, argvPath) {
+  if (!argvPath) return false;
+  return moduleFilename === fs.realpathSync(argvPath);
+}
+
+/**
  * @param {string[]} argv
  * @returns {ParseResult}
  */
@@ -229,6 +239,6 @@ function main() {
   process.exit(res.status === null ? 1 : res.status);
 }
 
-export { resolvePackageRoot, parseArgs, findTool, discoverShell, preflight, buildSpawn, usage };
+export { resolvePackageRoot, isMain, parseArgs, findTool, discoverShell, preflight, buildSpawn, usage };
 
-if (import.meta.main) main();
+if (isMain(import.meta.filename, process.argv[1])) main();

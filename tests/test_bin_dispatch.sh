@@ -89,6 +89,12 @@ grep -Fq "usage:" "$tmpdir/help"
 version_out=$(run_bin --version)
 [ "$version_out" = "9.9.9-test" ] || { echo "unexpected --version output: $version_out" >&2; exit 1; }
 
+# npm/npx invoke bins through links; the ESM direct-entry gate must resolve it.
+bin_link="$tmpdir/superpowers-wrapper"
+ln -s "$pkg/bin/superpowers-wrapper.js" "$bin_link"
+version_out=$(PATH="$fakebin" "$fakebin/node" "$bin_link" --version)
+[ "$version_out" = "9.9.9-test" ] || { echo "unexpected symlinked --version output: $version_out" >&2; exit 1; }
+
 # --- Exit-code propagation ---
 cat > "$pkg/scripts/probe" <<EOF
 #!/bin/sh
