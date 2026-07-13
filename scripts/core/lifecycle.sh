@@ -25,16 +25,16 @@ spw_replace_generated_tree() {
   fi
 }
 
-spw_generated_metadata_path() {
+spw_generated_metadata_path() (
   generated_root="$1"
   printf '%s\n' "$generated_root/plugins/superpowers/.superpowers-upstream.json"
-}
+)
 
-spw_generated_commit_or_empty() {
+spw_generated_commit_or_empty() (
   generated_root="$1"
   generated_metadata=$(spw_generated_metadata_path "$generated_root")
   spw_metadata_commit_lenient_or_empty "$generated_metadata"
-}
+)
 
 spw_verify_installed_fingerprint() {
   desired_commit="$1"

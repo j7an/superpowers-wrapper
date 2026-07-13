@@ -16,7 +16,7 @@ test -f "$tsconfig"
 test -f "$root/.dockerignore"
 
 grep -Fxq 'FROM node:24-bookworm-slim' "$dockerfile"
-grep -Fq 'useradd --create-home --uid 10001 spw' "$dockerfile"
+grep -Fxq 'RUN useradd --create-home --uid 10001 spw' "$dockerfile"
 grep -Fxq 'USER spw' "$dockerfile"
 grep -Fq '"@openai/codex": "0.144.1"' "$tools"
 grep -Fq '"typescript": "7.0.2"' "$tools"
