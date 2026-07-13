@@ -4,6 +4,7 @@ node_modules
 .superpowers/
 .worktrees/
 plugins/.superpowers.prepare.*/
+plugins/.superpowers.bak.*/
 *.tgz
 docs/superpowers
 plugins/superpowers/**

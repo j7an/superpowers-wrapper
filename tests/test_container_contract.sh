@@ -16,6 +16,8 @@ test -f "$tsconfig"
 test -f "$root/.dockerignore"
 
 grep -Fxq 'FROM node:24-bookworm-slim' "$dockerfile"
+grep -Fq 'useradd --create-home --uid 10001 spw' "$dockerfile"
+grep -Fxq 'USER spw' "$dockerfile"
 grep -Fq '"@openai/codex": "0.144.1"' "$tools"
 grep -Fq '"typescript": "7.0.2"' "$tools"
 grep -Fq '"@types/node": "24.13.3"' "$tools"
@@ -30,9 +32,13 @@ grep -Fq -- '--read-only' "$runner"
 grep -Fq 'docker build --pull ' "$runner"
 grep -Fq -- '--tmpfs /home/spw:rw,nosuid,size=128m,uid=10001,gid=10001' "$runner"
 grep -Fq 'codex-spike)' "$runner"
+grep -Fq 'actual_uid=$(id -u)' "$runner"
+grep -Fq 'container acceptance suite must run as UID 10001' "$runner"
+grep -Fxq 'plugins/.superpowers.bak.*/' "$root/.gitignore"
 grep -Fxq '.superpowers/' "$root/.dockerignore"
 grep -Fxq '.worktrees/' "$root/.dockerignore"
 grep -Fxq 'plugins/.superpowers.prepare.*/' "$root/.dockerignore"
+grep -Fxq 'plugins/.superpowers.bak.*/' "$root/.dockerignore"
 
 ruby - "$runner" <<'RUBY'
 runner = File.read(ARGV.fetch(0))

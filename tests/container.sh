@@ -5,6 +5,12 @@ root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 image="superpowers-wrapper-test:local"
 
 if [ "${1:-}" = "--inside" ]; then
+  actual_uid=$(id -u)
+  if [ "$actual_uid" != 10001 ]; then
+    echo "error: container acceptance suite must run as UID 10001 (got $actual_uid)" >&2
+    exit 1
+  fi
+
   mode="${2:-suite}"
   case "$mode" in
     suite)
