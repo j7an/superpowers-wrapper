@@ -40,8 +40,14 @@ spw_verify_installed_fingerprint() {
   desired_commit="$1"
   install_result="$2"
   inspect_result="$3"
-  spw_inspect_fingerprint "$inspect_result"
-  installed_commit=$(spw_adapter_result_get "$inspect_result" "fingerprint")
+  if ! spw_inspect_fingerprint "$inspect_result"; then
+    echo "error: installed wrapper fingerprint inspection failed after install." >&2
+    return 1
+  fi
+  if ! installed_commit=$(spw_adapter_result_get "$inspect_result" "fingerprint"); then
+    echo "error: cannot parse installed wrapper fingerprint inspection result after install." >&2
+    return 1
+  fi
   printf 'desired_commit=%s\n' "$desired_commit"
   printf 'installed_commit=%s\n' "$installed_commit"
   if [ -n "$installed_commit" ] && spw_commit_matches "$desired_commit" "$installed_commit"; then

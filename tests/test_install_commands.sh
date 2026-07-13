@@ -125,6 +125,17 @@ cat > "$fake_adapter" <<'EOF'
 set -eu
 state=$(CDPATH= cd -- "$(dirname "$0")" && pwd)/state
 printf '%s\n' "$*" >> "$state/adapter.log"
+if [ "${1:-}" = inspect ] && [ "${2:-}" = --view ] && [ "${3:-}" = fingerprint ] &&
+   [ -d "$state/codex-home/plugins/cache/superpowers-wrapper" ]; then
+  if [ -f "$state/fingerprint_inspect_fail" ]; then
+    printf '%s\n' 'fingerprint inspection failed in adapter fixture' >&2
+    exit 99
+  fi
+  if [ -f "$state/fingerprint_inspect_malformed" ]; then
+    printf '%s' '{'
+    exit 0
+  fi
+fi
 exec "$SPW_TEST_PKG_ROOT/scripts/adapters/codex/adapter" "$@"
 EOF
 chmod +x "$fake_adapter"
@@ -133,7 +144,8 @@ marketplace_absent='{"marketplaces":[{"name":"openai-curated","root":"/x"}]}'
 
 reset() {
   rm -f "$state/marketplace_list.rc" "$state/marketplace_add_fail" \
-        "$state/plugin_add_fail" "$state/plugin_add_noop" "$state/plugin_add_stale"
+        "$state/plugin_add_fail" "$state/plugin_add_noop" "$state/plugin_add_stale" \
+        "$state/fingerprint_inspect_fail" "$state/fingerprint_inspect_malformed"
   rm -rf "$state/codex-home"
   : > "$log"
   : > "$state/adapter.log"
@@ -418,6 +430,37 @@ printf '%s\n' "$marketplace_absent" > "$state/marketplace_list.json"
 expect_fail
 grep -Fq "fingerprint is not detectable" "$state/out"
 grep -Fq "verify with 'codex plugin list --json'" "$state/out"
+
+# ---------------------------------------------------------------------------
+# Scenario 8a: fingerprint inspection command failure is reported as an
+# inspection failure, never as valid absence or success.
+# ---------------------------------------------------------------------------
+reset
+printf '%s\n' "$marketplace_absent" > "$state/marketplace_list.json"
+: > "$state/fingerprint_inspect_fail"
+expect_fail
+grep -Fq "fingerprint inspection" "$state/out"
+if grep -Fq "fingerprint is not detectable" "$state/out" ||
+   grep -Fq "wrapper updated" "$state/out"; then
+  echo "unverifiable fingerprint state must not be reported as absence or success" >&2
+  exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# Scenario 8b: malformed fingerprint inspection output is rejected by response
+# validation and reported as an inspection failure, never as absence or success.
+# ---------------------------------------------------------------------------
+reset
+printf '%s\n' "$marketplace_absent" > "$state/marketplace_list.json"
+: > "$state/fingerprint_inspect_malformed"
+expect_fail
+grep -Fq "invalid adapter response" "$state/out"
+grep -Fq "fingerprint inspection" "$state/out"
+if grep -Fq "fingerprint is not detectable" "$state/out" ||
+   grep -Fq "wrapper updated" "$state/out"; then
+  echo "unverifiable fingerprint state must not be reported as absence or success" >&2
+  exit 1
+fi
 
 # ---------------------------------------------------------------------------
 # Scenario 9: remove-add refresh mode -> plugin remove between marketplace
