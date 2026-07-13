@@ -42,6 +42,22 @@ grep -Fxq 'plugins/.superpowers.bak.*/' "$root/.dockerignore"
 
 ruby - "$runner" <<'RUBY'
 runner = File.read(ARGV.fetch(0))
+inside = runner.match(/^if \[ "\$\{1:-\}" = "--inside" \]; then\n(?<body>.*?)^fi\n\nmode="\$\{1:-suite\}"/m)
+raise "runner must define the --inside branch before host-side mode dispatch" unless inside
+inside_lines = inside[:body].lines.map(&:rstrip)
+uid_guard = [
+  '  actual_uid=$(id -u)',
+  '  if [ "$actual_uid" != 10001 ]; then',
+  '    echo "error: container acceptance suite must run as UID 10001 (got $actual_uid)" >&2',
+  '    exit 1',
+  '  fi',
+]
+guard_index = inside_lines.each_cons(uid_guard.length).find_index { |lines| lines == uid_guard }
+mode_index = inside_lines.index('  mode="${2:-suite}"')
+dispatch_index = inside_lines.index('  case "$mode" in')
+unless guard_index && mode_index && dispatch_index && guard_index < mode_index && mode_index < dispatch_index
+  raise "--inside must reject UIDs other than 10001 before selecting or dispatching the acceptance mode"
+end
 suite = /suite\)\s+sh tests\/run\.sh\s+exec sh tests\/container\/codex-offline-probe\.sh\s+;;/
 raise "suite mode must run the inner suite and then the offline Codex probe" unless runner.match?(suite)
 RUBY
