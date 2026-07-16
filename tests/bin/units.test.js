@@ -3,7 +3,7 @@
 // the Windows dispatch path is testable without Windows.
 const assert = require('assert');
 const path = require('path');
-const bin = require('../../bin/superpowers-wrapper.js');
+const bin = require('../../bin/superpowers-manager.js');
 
 // --- parseArgs ---
 assert.deepStrictEqual(bin.parseArgs([]), { kind: 'run', cmd: 'update', args: [] });
@@ -35,8 +35,11 @@ assert.strictEqual(win.file, gitBash);
 assert.deepStrictEqual(win.argv, [path.join('C:\\pkg', 'scripts', 'update'), '-x']);
 
 // --- resolvePackageRoot walks up to package.json from the bin's real path ---
-const root = bin.resolvePackageRoot(path.join(__dirname, '..', '..', 'bin', 'superpowers-wrapper.js'));
+const root = bin.resolvePackageRoot(path.join(__dirname, '..', '..', 'bin', 'superpowers-manager.js'));
 assert.strictEqual(root, path.resolve(__dirname, '..', '..'));
+
+// --- usage identifies the public executable ---
+assert.match(bin.usage(), /^usage: superpowers-manager /);
 
 // --- preflight: codex required only for install/update/uninstall ---
 const emptyEnv = { PATH: '/nonexistent-dir-for-test' };

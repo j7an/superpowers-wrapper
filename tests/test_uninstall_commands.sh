@@ -44,9 +44,9 @@ exit 0
 EOF
 chmod +x "$fake_codex"
 
-plugin_present='{"installed":[{"pluginId":"superpowers@superpowers-wrapper","name":"superpowers","marketplaceName":"superpowers-wrapper"}],"available":[]}'
+plugin_present='{"installed":[{"pluginId":"superpowers@superpowers-manager","name":"superpowers","marketplaceName":"superpowers-manager"}],"available":[]}'
 plugin_absent='{"installed":[],"available":[]}'
-marketplace_present='{"marketplaces":[{"name":"openai-curated","root":"/x"},{"name":"superpowers-wrapper","root":"/y"}]}'
+marketplace_present='{"marketplaces":[{"name":"openai-curated","root":"/x"},{"name":"superpowers-manager","root":"/y"}]}'
 marketplace_absent='{"marketplaces":[{"name":"openai-curated","root":"/x"}]}'
 
 reset() {
@@ -110,10 +110,10 @@ reset
 printf '%s\n' "$plugin_present" > "$state/plugin_list.json"
 printf '%s\n' "$marketplace_present" > "$state/marketplace_list.json"
 run_uninstall >/dev/null
-grep -Fq "plugin remove superpowers@superpowers-wrapper" "$log"
-grep -Fq "plugin marketplace remove superpowers-wrapper" "$log"
-rm_line=$(grep -Fn "plugin remove superpowers@superpowers-wrapper" "$log" | head -n1 | cut -d: -f1)
-mp_line=$(grep -Fn "plugin marketplace remove superpowers-wrapper" "$log" | head -n1 | cut -d: -f1)
+grep -Fq "plugin remove superpowers@superpowers-manager" "$log"
+grep -Fq "plugin marketplace remove superpowers-manager" "$log"
+rm_line=$(grep -Fn "plugin remove superpowers@superpowers-manager" "$log" | head -n1 | cut -d: -f1)
+mp_line=$(grep -Fn "plugin marketplace remove superpowers-manager" "$log" | head -n1 | cut -d: -f1)
 [ "$rm_line" -lt "$mp_line" ] || { echo "plugin remove must precede marketplace remove" >&2; exit 1; }
 if grep -Fq "openai-curated" "$log"; then
   echo "uninstall must never name openai-curated" >&2
@@ -125,11 +125,11 @@ reset
 printf '%s\n' "$plugin_absent" > "$state/plugin_list.json"
 printf '%s\n' "$marketplace_present" > "$state/marketplace_list.json"
 out=$(run_uninstall)
-if grep -Fq "plugin remove superpowers@superpowers-wrapper" "$log"; then
+if grep -Fq "plugin remove superpowers@superpowers-manager" "$log"; then
   echo "must not remove an absent plugin" >&2
   exit 1
 fi
-grep -Fq "plugin marketplace remove superpowers-wrapper" "$log"
+grep -Fq "plugin marketplace remove superpowers-manager" "$log"
 printf '%s\n' "$out" | grep -Fq "plugin not installed; skipping"
 
 # --- Scenario 3: both absent -> no removes, idempotent success, both skips ---
@@ -182,7 +182,7 @@ printf '%s\n' "$marketplace_present" > "$state/marketplace_list.json"
 : > "$state/remove_noop"   # removes are logged but do not mutate the fixtures
 expect_fail
 # the removal was attempted...
-grep -Fq "plugin remove superpowers@superpowers-wrapper" "$log"
+grep -Fq "plugin remove superpowers@superpowers-manager" "$log"
 # ...but the plugin is still present on re-query, so uninstall must NOT succeed
 assert_output_contains "still installed"
 
@@ -193,7 +193,7 @@ printf '%s\n' "$plugin_present" > "$state/plugin_list.json"
 printf '%s\n' "$marketplace_present" > "$state/marketplace_list.json"
 : > "$state/remove_plugin_missing_installed"
 expect_fail
-grep -Fq "plugin remove superpowers@superpowers-wrapper" "$log"
+grep -Fq "plugin remove superpowers@superpowers-manager" "$log"
 assert_output_contains "cannot parse output of"
 if grep -Fq "uninstall complete" "$state/out"; then
   echo "must not report success when verify-after sees schema drift" >&2

@@ -37,6 +37,6 @@ else
   printf 'resolved ref: %s\n' "$resolved_ref"
   printf 'desired commit: %s\n' "$desired_commit"
   printf 'generated plugin commit: %s\n' "${generated_commit:-not present}"
-  printf 'installed wrapper commit or fingerprint: %s\n' "${installed_commit:-not detected}"
+  printf 'installed manager commit or fingerprint: %s\n' "${installed_commit:-not detected}"
   printf 'status: %s\n' "$status"
 fi

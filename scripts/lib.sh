@@ -1,8 +1,8 @@
 #!/bin/sh
 
 SPW_UPSTREAM_URL_DEFAULT="https://github.com/obra/superpowers"
-SPW_PLUGIN_ID="superpowers@superpowers-wrapper"
-SPW_MARKETPLACE_NAME="superpowers-wrapper"
+SPW_PLUGIN_ID="superpowers@superpowers-manager"
+SPW_MARKETPLACE_NAME="superpowers-manager"
 
 spw_die() {
   echo "error: $*" >&2
@@ -60,24 +60,24 @@ spw_manifest_version_for_ref() {
     latest-release|tag)
       base=$(printf '%s' "$resolved_ref" | sed -n 's/^v//p')
       if [ -n "$base" ] && spw_is_semver_base "$base"; then
-        printf '%s+wrapper.%s\n' "$base" "$short"
+        printf '%s+manager.%s\n' "$base" "$short"
         return
       fi
       ;;
     ref)
       if [ "$requested_ref" = "main" ]; then
-        printf '0.0.0-main+wrapper.%s\n' "$short"
+        printf '0.0.0-main+manager.%s\n' "$short"
         return
       fi
       sanitized=$(spw_sanitize_ref_for_version "$requested_ref")
-      printf '0.0.0-ref-%s+wrapper.%s\n' "$sanitized" "$short"
+      printf '0.0.0-ref-%s+manager.%s\n' "$sanitized" "$short"
       return
       ;;
     raw-commit)
       ;;
   esac
 
-  printf '0.0.0+wrapper.%s\n' "$short"
+  printf '0.0.0+manager.%s\n' "$short"
 }
 
 spw_manifest_version_for_commit() {
@@ -379,7 +379,7 @@ spw_manifest_short_sha_or_empty() {
   fi
   version=$(spw_json_get "$file" "version")
   case "$version" in
-    *+wrapper.*)
+    *+manager.*)
       short="${version##*.}"
       case "$short" in
         ""|*[!0-9a-fA-F]*)
@@ -477,7 +477,7 @@ spw_marketplace_is_registered() {
 # document (as a string argument, like spw_json_array_has), or nothing if the
 # marketplace is absent. Exit 2 on unparseable JSON, a non-object item, or an
 # item without a non-empty string name: such an item cannot be proven unrelated
-# and must not be mistaken for an absent wrapper marketplace. Validate root only
+# and must not be mistaken for an absent manager marketplace. Validate root only
 # on the matching item; unrelated marketplace roots are never read. A matching
 # item without a non-empty string root also exits 2. Empty output is unambiguous:
 # a valid registered root is always a non-empty path.
@@ -528,14 +528,14 @@ print("same" if na == nb else "different")
 PY
 }
 
-# Reconcile Codex's wrapper marketplace pointer to <current_root>:
+# Reconcile Codex's manager marketplace pointer to <current_root>:
 #   absent                     -> add
 #   same physical root         -> keep
 #   different root             -> remove, then add
 # List/parse failures abort before any marketplace change. If remove
 # succeeds and add fails, print a recovery command for the current root AND
 # the previous root so the user can restore last-known-good state. Only the
-# superpowers-wrapper marketplace is ever touched.
+# superpowers-manager marketplace is ever touched.
 spw_reconcile_marketplace() {
   codex_bin="$1"
   current_root="$2"
@@ -566,7 +566,7 @@ spw_reconcile_marketplace() {
   fi
 }
 
-# Return the currently installed wrapper commit/fingerprint, or empty if the
+# Return the currently installed manager commit/fingerprint, or empty if the
 # installed plugin cannot be detected. This is intentionally local-only: callers
 # pass the desired commit into spw_verify_refresh so post-mutation verification
 # never refetches or re-resolves upstream after Codex state has changed.
@@ -583,8 +583,8 @@ spw_installed_commit_or_empty() {
   printf '%s\n' "$installed_commit"
 }
 
-# After an install, confirm the installed wrapper refreshed to <desired_commit>.
-# Never prints a success line while the installed wrapper is detectably stale.
+# After an install, confirm the installed manager refreshed to <desired_commit>.
+# Never prints a success line while the installed manager is detectably stale.
 # Shared by scripts/install and scripts/update.
 spw_verify_refresh() {
   desired_commit="$1"
@@ -592,14 +592,14 @@ spw_verify_refresh() {
   printf 'desired_commit=%s\n' "$desired_commit"
   printf 'installed_commit=%s\n' "$installed_commit"
   if [ -n "$installed_commit" ] && spw_commit_matches "$desired_commit" "$installed_commit"; then
-    echo "wrapper updated"
+    echo "manager updated"
     return 0
   fi
   if [ -n "$installed_commit" ]; then
-    echo "error: installed wrapper is still stale after install; the local plugin cache did not refresh." >&2
+    echo "error: installed manager is still stale after install; the local plugin cache did not refresh." >&2
     echo "hint: retry with SUPERPOWERS_INSTALL_REFRESH_MODE=remove-add" >&2
     exit 1
   fi
-  echo "error: installed wrapper not detectable, cannot confirm refresh; verify with 'codex plugin list --json'." >&2
+  echo "error: installed manager not detectable, cannot confirm refresh; verify with 'codex plugin list --json'." >&2
   return 1
 }
