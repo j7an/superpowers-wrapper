@@ -45,7 +45,7 @@ def action_steps(job, prefix)
 end
 
 workflow = expect_hash(workflow, "workflow")
-expect_equal(fetch(workflow, "name", "name"), "Release 0.1.2 Migration", "name")
+expect_equal(fetch(workflow, "name", "name"), "Release 0.1.3 Recovery", "name")
 
 # Psych implements YAML 1.1, where an unquoted GitHub `on` key becomes true.
 on_keys = ["on", true].select { |key| workflow.key?(key) }
@@ -53,7 +53,7 @@ raise "expected exactly one active on mapping" unless on_keys.length == 1
 
 on_config = expect_hash(fetch(workflow, on_keys.fetch(0), "on"), "on")
 push = expect_hash(fetch(on_config, "push", "on.push"), "on.push")
-expect_equal(fetch(push, "tags", "on.push.tags"), ["v0.1.2"], "on.push.tags")
+expect_equal(fetch(push, "tags", "on.push.tags"), ["v0.1.3"], "on.push.tags")
 
 expect_equal(fetch(workflow, "permissions", "permissions"), {}, "permissions")
 concurrency = expect_hash(fetch(workflow, "concurrency", "concurrency"), "concurrency")
@@ -128,12 +128,13 @@ end
 
 source_check = step_run(build, "Verify frozen release source")
 [
-  'test "$GITHUB_REF" = "refs/tags/v0.1.2"',
-  'origin/release/0.1.2-manager',
+  'test "$GITHUB_REF" = "refs/tags/v0.1.3"',
+  'origin/release/0.1.3-manager',
   'test "$branch_sha" = "$GITHUB_SHA"',
-  'git merge-base --is-ancestor v0.1.1 "$GITHUB_SHA"',
+  'git merge-base --is-ancestor v0.1.2 "$GITHUB_SHA"',
+  'test "$(git rev-parse "$GITHUB_SHA^")" = "$(git rev-parse v0.1.2)"',
   'superpowers-manager',
-  '0.1.2',
+  '0.1.3',
   'git+https://github.com/j7an/superpowers-manager.git',
 ].each do |needle|
   raise "source check missing #{needle.inspect}" unless source_check.include?(needle)
@@ -142,12 +143,28 @@ end
 expect_equal(step_run(build, "Run isolated acceptance suite").strip, "sh tests/container.sh", "container test command")
 
 all_runs = jobs.values.flat_map { |job| job.fetch("steps", []).map { |step| step["run"] }.compact }.join("\n")
-raise "build and publish must require npm >=11.5.1" unless all_runs.scan('npm install --global "npm@>=11.5.1"').length == 2
+npm_specs = all_runs.scan(/npm install --global "npm@([^"]+)"/).flatten
+unless npm_specs == ["11.16.0", "11.16.0"]
+  warn "npm installer specs must be exactly 11.16.0 twice; ranges and alternate versions are forbidden"
+end
+expect_equal(
+  npm_specs,
+  ["11.16.0", "11.16.0"],
+  "exact npm installer specs",
+)
+
+npm_version_assertion = 'test "$(npm --version)" = "11.16.0"'
+expect_equal(
+  all_runs.scan(npm_version_assertion).length,
+  2,
+  "exact npm version assertions",
+)
 raise "workflow must run npm pack --json exactly once" unless all_runs.scan(/npm pack --json/).length == 1
 pack = step_run(build, "Pack and assert artifact")
 [
   "npm pack --json",
   "sh tests/assert_pack_contents.sh",
+  'test "$filename" = "superpowers-manager-0.1.3.tgz"',
   'filename=',
   'integrity=',
   'GITHUB_OUTPUT',
@@ -177,8 +194,16 @@ publish_run = step_run(publish, "Publish exact tarball idempotently")
   raise "publish step missing #{needle.inspect}" unless publish_run.include?(needle)
 end
 publish_step = fetch(publish, "steps", "jobs.publish.steps").find { |step| step["name"] == "Publish exact tarball idempotently" }
+publish_env = fetch(publish_step, "env", "publish step env")
+expect_equal(fetch(publish_env, "PACKAGE", "publish PACKAGE"), "superpowers-manager", "publish PACKAGE")
+expect_equal(fetch(publish_env, "VERSION", "publish VERSION"), "0.1.3", "publish VERSION")
 expect_equal(
-  fetch(publish_step, "env", "publish step env").fetch("NODE_AUTH_TOKEN"),
+  fetch(publish_env, "TARBALL", "publish TARBALL"),
+  "dist/${{ needs.build.outputs.filename }}",
+  "publish TARBALL",
+)
+expect_equal(
+  fetch(publish_env, "NODE_AUTH_TOKEN", "publish NODE_AUTH_TOKEN"),
   "${{ secrets.NPM_BOOTSTRAP_TOKEN }}",
   "publish token",
 )
@@ -193,18 +218,21 @@ end
 poll = step_run(publish, "Wait for registry integrity")
 raise "registry polling must be bounded" unless poll.include?('while [ "$attempt" -le 30 ]') && poll.include?("sleep 10")
 raise "registry polling must verify integrity" unless poll.include?('test "$observed_integrity" = "$EXPECTED_INTEGRITY"')
+poll_step = fetch(publish, "steps", "jobs.publish.steps").find { |step| step["name"] == "Wait for registry integrity" }
+poll_env = fetch(poll_step, "env", "poll step env")
+expect_equal(fetch(poll_env, "VERSION", "poll VERSION"), "0.1.3", "poll VERSION")
 
 npx = step_run(publish, "Verify clean npx execution")
 raise "npx check must use a new temporary cache" unless npx.include?('NPM_CONFIG_CACHE=$(mktemp -d)')
-raise "missing exact npx check" unless npx.include?('npx --yes superpowers-manager@0.1.2 --version')
+raise "missing exact npx check" unless npx.include?('npx --yes superpowers-manager@0.1.3 --version')
 
 provenance = step_run(publish, "Verify npm provenance")
 [
   "node tests/verify_npm_provenance.mjs",
   "superpowers-manager",
-  "0.1.2",
+  "0.1.3",
   "https://github.com/j7an/superpowers-manager",
-  "refs/tags/v0.1.2",
+  "refs/tags/v0.1.3",
   ".github/workflows/release.yml",
   "${{ github.sha }}",
   "${{ needs.build.outputs.integrity }}",
@@ -214,9 +242,11 @@ end
 
 release_run = step_run(github_release, "Create or verify GitHub release")
 [
+  "TAG=v0.1.3",
   "${{ needs.build.outputs.filename }}",
   "gh release create",
   "gh release upload",
+  '--title "Superpowers Manager 0.1.3"',
   "existing_digest",
   "expected_digest",
   "existing release asset has different digest",
