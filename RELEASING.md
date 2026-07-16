@@ -1,220 +1,529 @@
-# Releasing Superpowers Manager 0.1.2
+# Releasing Superpowers Manager 0.1.3
 
-This is the authoritative, one-time migration procedure for
-`superpowers-manager@0.1.2`. Every GitHub or npm mutation below has its own
-explicit approval gate. Stop at each gate; do not treat approval for one step as
-approval for another.
+This is the authoritative recovery procedure for
+`superpowers-manager@0.1.3`. It replaces the failed `0.1.2` procedure. Reading,
+reviewing, merging, or following the read-only checks in this document does not
+authorize an external mutation.
 
-The migration workflow runs only for the exact `v0.1.2` tag on the frozen
-`release/0.1.2-manager` branch. It must never be reused for a later version,
-prerelease, or dist-tag correction. Modular `main` replaces it with the normal
-shared OIDC publisher before `0.2.0` or any other main-line release.
+Stop at every **Recovery Gate** and obtain explicit approval for only the
+mutation named by that gate. Approvals are non-transitive: approval for R1 does
+not authorize R2, approval for R2 does not authorize R3, and so on through R6.
+No approval authorizes a different package, version, tag, workflow run,
+environment, credential, repository, or npm metadata change.
 
-## 1. Review, merge, and freeze the maintenance branch
+## 1. Preserve the failed incident as immutable evidence
 
-Review the maintenance PR into `release/0.1.2-manager`, not `main`. Confirm its
-scope contains only the identity migration, legacy-state safety, documentation,
-acceptance tests, and this release path. Merge only after the PR review gate is
-explicitly approved. Then record one immutable SHA:
+The public `v0.1.2` tag points to:
+
+```text
+733ddfc0dce4598c65a4945df08f7a0f64d875a4
+```
+
+GitHub Actions failed run 29501874951 is:
+
+```text
+https://github.com/j7an/superpowers-manager/actions/runs/29501874951
+```
+
+The run passed frozen-source verification and isolated acceptance, then failed
+before artifact upload because `npm install --global "npm@>=11.5.1"` selected
+npm `12.0.1`. npm 12 changed `npm pack --json` from the reviewed npm-11
+one-element array to an object keyed by package name. The publish and GitHub
+release jobs were skipped.
+
+No `superpowers-manager@0.1.2` npm version, uploaded workflow artifact, or
+GitHub release was created. The failed-run npm token was revoked. Its
+`NPM_BOOTSTRAP_TOKEN` environment secret and temporary `npm-bootstrap`
+environment were removed.
+
+The failed run must never be rerun. v0.1.2 must not be moved, deleted, or recreated.
+`superpowers-manager@0.1.2` must never be published. Recheck the incident
+read-only before continuing:
 
 ```sh
-git fetch origin release/0.1.2-manager --tags
-frozen_sha=$(git rev-parse origin/release/0.1.2-manager)
-git status --short
+test "$(git rev-parse v0.1.2)" = \
+  "733ddfc0dce4598c65a4945df08f7a0f64d875a4"
+gh run view 29501874951 \
+  --repo j7an/superpowers-manager \
+  --json databaseId,headBranch,headSha,status,conclusion,url
+npm view superpowers-manager@0.1.2 --json
+gh release view v0.1.2 --repo j7an/superpowers-manager
+gh api repos/j7an/superpowers-manager/environments \
+  --jq '.environments[].name'
+gh secret list --repo j7an/superpowers-manager
+```
+
+The npm and GitHub release lookups must report absence. Only the long-lived
+`npm` and `release` environments may exist, and no bootstrap secret may exist.
+Stop and adjudicate if any observed state differs.
+
+## 2. Review, squash-merge, and freeze the recovery branch
+
+The recovery line is `release/0.1.3-manager`, created from exact public tag
+`v0.1.2`. Review the feature branch through a pull request targeting
+`release/0.1.3-manager`, never `main`. Repository policy remains squash-only
+with linear history.
+
+The complete tracked recovery diff from `v0.1.2` is restricted to this exact
+allowlist:
+
+```text
+.github/workflows/release.yml
+README.md
+RELEASING.md
+package.json
+scripts/lib.sh
+tests/container/codex-offline-probe.sh
+tests/test_bootstrap.sh
+tests/test_identity_state.sh
+tests/test_release_workflow.sh
+tests/test_verify_npm_provenance.mjs
+```
+
+Before approval, inspect the exact diff and require its sorted file list to
+equal the allowlist:
+
+```sh
+git fetch origin release/0.1.3-manager --tags
+git diff --name-status v0.1.2...HEAD
+git diff --name-only v0.1.2...HEAD | LC_ALL=C sort
+git diff --check v0.1.2...HEAD
+git log --oneline --decorate v0.1.2..HEAD
+```
+
+The changes may only:
+
+- set the package and versioned guidance to `superpowers-manager@0.1.3`;
+- preserve the reviewed `v0.1.2` product behavior and identity;
+- keep strict fail-closed Codex identity parsing;
+- trigger the recovery workflow only for exact tag `v0.1.3`;
+- pin build and publish jobs to exact `npm@11.16.0`; and
+- document and test this recovery.
+
+After explicit PR approval, squash-merge into `release/0.1.3-manager`. Then
+fetch and freeze the full post-squash remote head SHA:
+
+```sh
+git fetch origin release/0.1.3-manager --tags
+frozen_sha=$(git rev-parse origin/release/0.1.3-manager)
+test "$(git rev-parse "$frozen_sha^")" = "$(git rev-parse v0.1.2)"
 git show --stat --oneline "$frozen_sha"
-git show "$frozen_sha:package.json"
+git diff --name-only v0.1.2..."$frozen_sha" | LC_ALL=C sort
 ```
 
-Do not merge or force-push another commit to the branch after freezing it.
+Record `frozen_sha`. Do not force-push or add another commit after it is frozen.
+No tag or package mutation is authorized by the PR approval.
 
-## 2. Verify the maintenance branch and published 0.1.1 baseline
+## 3. Complete all pre-tag verification
 
-Prove the frozen branch descends from the stable line and is not the unfinished
-modular tree:
+Use a clean checkout of `"$frozen_sha"`. Confirm the package, workflow source,
+and recovery ancestry:
 
 ```sh
-git merge-base --is-ancestor v0.1.1 "$frozen_sha"
-git diff --stat v0.1.1..."$frozen_sha"
-git diff --name-status v0.1.1..."$frozen_sha"
-git diff --check v0.1.1..."$frozen_sha"
-npm view superpowers-wrapper@0.1.1 name version repository dist.integrity --json
+test "$(node -p 'require("./package.json").name')" = \
+  "superpowers-manager"
+test "$(node -p 'require("./package.json").version')" = "0.1.3"
+test "$(node -p 'require("./package.json").repository.url')" = \
+  "git+https://github.com/j7an/superpowers-manager.git"
+git merge-base --is-ancestor v0.1.2 "$frozen_sha"
+test "$(git rev-parse "$frozen_sha^")" = "$(git rev-parse v0.1.2)"
 ```
 
-From a clean checkout of the frozen SHA, run the acceptance and package checks:
+Run the focused contracts and full host suite:
 
 ```sh
+sh tests/test_bootstrap.sh
+sh tests/test_release_workflow.sh
+sh tests/test_identity_state.sh
+sh tests/test_container_contract.sh
 sh tests/run.sh
+```
+
+Run blocking isolated acceptance with the real Codex CLI only inside the
+throwaway container:
+
+```sh
 sh tests/container.sh
-npm pack --dry-run --json
+```
+
+Install and verify the exact reviewed npm version before the package dry run:
+
+```sh
+npm install --global "npm@11.16.0"
+test "$(npm --version)" = "11.16.0"
+pack_report=$(mktemp)
+npm pack --dry-run --json > "$pack_report"
+sh tests/assert_pack_contents.sh "$pack_report"
 git diff --check
 git status --short
 ```
 
-The container suite is blocking before tagging. The package must be exactly
-`superpowers-manager@0.1.2`, contain only the asserted source files, and retain
-`v0.1.1` behavior except for reviewed migration changes.
+The package report must describe exactly one npm-11 array entry, version
+`0.1.3`, filename `superpowers-manager-0.1.3.tgz`, and only the files in
+`tests/expected_tarball_contents.txt`. The checkout must remain clean.
 
-## 3. Rename GitHub after the explicit rename gate
-
-First recheck the volatile namespace, policy, and repository assumptions without
-changing them:
+Confirm `.github/workflows/release.yml` contains exact installation and version
+checks in both the build and publish jobs:
 
 ```sh
-npm view superpowers-manager --json
-gh api repos/j7an/superpowers-manager
-gh repo view j7an/superpowers-wrapper --json nameWithOwner,url,defaultBranchRef
-gh api repos/j7an/superpowers-wrapper/rulesets
-npm profile get tfa
+npm install --global "npm@11.16.0"
+test "$(npm --version)" = "11.16.0"
 ```
 
-The new npm package and GitHub repository must still be absent, and the old
-repository and package must remain intact. If reality differs, stop and
-adjudicate; do not improvise. After explicit rename approval only:
+Ranges, npm 12, alternate versions, extra npm installers, parser broadening,
+generated plugin content, main-line code, and any file outside the allowlist
+are stop conditions.
+
+## 4. Recovery Gate R1: create fresh bootstrap credentials
+
+**STOP — EXTERNAL MUTATION GATE R1**
+
+R1 authorizes only creation and storage of one fresh temporary npm token and
+the protected GitHub `npm-bootstrap` environment. It does not authorize a tag,
+workflow approval, publication, cleanup, trust change, or deprecation.
+
+Immediately before requesting R1 approval, recheck read-only:
+
+- current official npm policy still permits a short-lived granular token to
+  create this unscoped public package with provenance;
+- `superpowers-manager` and `superpowers-manager@0.1.3` are absent from npm;
+- local and remote `v0.1.3` are absent;
+- `npm-bootstrap` and `NPM_BOOTSTRAP_TOKEN` are absent; and
+- `origin/release/0.1.3-manager` still equals `"$frozen_sha"`.
+
+Present the token's minimum current package-creation scope, one-day expiry,
+2FA-bypass requirement, required environment reviewer, secret name, and cleanup
+obligation. Stop if npm policy now requires a different publication path.
+
+After explicit R1 approval only:
+
+1. Create a new one-day granular npm token interactively with the minimum
+   package-creation permission npm currently permits. If npm still requires
+   `All Packages: read/write` to create an unscoped package, that broader scope
+   is allowed only for this one recovery.
+2. Create GitHub environment `npm-bootstrap`.
+3. Configure the approved required reviewer.
+4. Store the token only as environment secret `NPM_BOOTSTRAP_TOKEN`.
+5. Never print, echo, or store the token at repository or organization scope.
+
+Create the protected environment and reviewer policy in the GitHub UI, then
+enter the token interactively without placing it on the command line:
 
 ```sh
-gh repo rename superpowers-manager --repo j7an/superpowers-wrapper --yes
-old_origin=$(git remote get-url origin)
-case "$old_origin" in
-  git@github.com:j7an/superpowers-wrapper.git)
-    new_origin=git@github.com:j7an/superpowers-manager.git
-    ;;
-  https://github.com/j7an/superpowers-wrapper.git)
-    new_origin=https://github.com/j7an/superpowers-manager.git
-    ;;
-  *)
-    echo "unexpected origin URL: $old_origin" >&2
-    exit 1
-    ;;
-esac
-git remote set-url origin "$new_origin"
-git fetch origin --tags
+gh secret set NPM_BOOTSTRAP_TOKEN \
+  --env npm-bootstrap \
+  --repo j7an/superpowers-manager
 ```
 
-Do not create a replacement repository at the old name.
-
-Verify the renamed repository before continuing:
-
-```sh
-git remote -v
-git fetch origin --tags
-gh repo view j7an/superpowers-manager --json nameWithOwner,url,defaultBranchRef,description,homepageUrl,repositoryTopics
-gh api repos/j7an/superpowers-manager/branches
-gh api repos/j7an/superpowers-manager/tags
-gh api repos/j7an/superpowers-manager/releases
-gh api repos/j7an/superpowers-manager/actions/workflows
-gh api repos/j7an/superpowers-manager/environments
-gh api repos/j7an/superpowers-manager/rulesets
-```
-
-Branches, tags, releases, Actions, environments, and rulesets must all survive.
-Set the approved description, README homepage, topics, and social preview only
-under this same explicit metadata gate.
-
-## 4. Create and store the one-day bootstrap token after its gate
-
-Immediately before execution, recheck npm policy. After explicit credential
-approval only, create a one-day granular token that bypasses 2FA with the minimum
-package-creation permission npm currently allows. Because the unscoped package
-does not exist, `All Packages: read/write` is acceptable only if npm still
-requires it for this approved bootstrap.
-
-Create the protected `npm-bootstrap` GitHub environment with a required reviewer
-and store the token only as its `NPM_BOOTSTRAP_TOKEN` environment secret. Never
-store it at repository or organization scope and never print its value. Verify
-presence by name only:
+Verify presence by name only:
 
 ```sh
 gh api repos/j7an/superpowers-manager/environments/npm-bootstrap
-gh api repos/j7an/superpowers-manager/environments/npm-bootstrap/secrets --jq '.secrets[].name'
+gh api \
+  repos/j7an/superpowers-manager/environments/npm-bootstrap/secrets \
+  --jq '.secrets[].name'
 ```
 
-## 5. Push v0.1.2 after the explicit tag gate
+Stop after verification and request R2 separately.
 
-Recheck the frozen branch and both local and remote tag absence:
+## 5. Recovery Gate R2: push exact lightweight v0.1.3
+
+**STOP — EXTERNAL MUTATION GATE R2**
+
+R2 authorizes only creation and push of one lightweight `v0.1.3` tag at the
+recorded `"$frozen_sha"`. It does not authorize publication approval or any
+other mutation.
+
+Recheck:
 
 ```sh
-git fetch origin release/0.1.2-manager --tags
-test "$(git rev-parse origin/release/0.1.2-manager)" = "$frozen_sha"
-test -z "$(git tag --list v0.1.2)"
-git ls-remote --exit-code origin refs/tags/v0.1.2
+git fetch origin release/0.1.3-manager --tags
+test "$(git rev-parse origin/release/0.1.3-manager)" = "$frozen_sha"
+test "$(git rev-parse "$frozen_sha^")" = "$(git rev-parse v0.1.2)"
+test -z "$(git tag --list v0.1.3)"
+git ls-remote --exit-code origin refs/tags/v0.1.3
+git show "$frozen_sha:package.json"
+git show "$frozen_sha:.github/workflows/release.yml"
 ```
 
-The last command must report that the remote tag does not exist. After explicit
-tag approval only, create and push the lightweight tag:
+The remote lookup must report tag absence. The package must be exactly
+`superpowers-manager@0.1.3`; the workflow must trigger only `v0.1.3`.
+
+Present the exact tag, full SHA, immutable-tag consequence, and workflow that
+will start. After explicit R2 approval only:
 
 ```sh
-git tag v0.1.2 "$frozen_sha"
-git show --no-patch --decorate v0.1.2
-git push origin refs/tags/v0.1.2
+git tag v0.1.3 "$frozen_sha"
+test "$(git cat-file -t v0.1.3)" = "commit"
+git show --no-patch --decorate v0.1.3
+git push origin refs/tags/v0.1.3
 ```
 
-The workflow must complete its build job and then wait at the protected
-`npm-bootstrap` environment. A tag at any other SHA is a stop condition.
+Identify the resulting release workflow run and verify its head SHA equals
+`"$frozen_sha"`. If the run fails, preserve the tag and run; never move the tag
+or dispatch another attempt under the same version.
 
-## 6. Approve npm-bootstrap after the first-publication gate
+## 6. Inspect the build and artifact before publication
 
-Before approval, inspect the workflow run and confirm the exact tag/branch SHA,
-successful `sh tests/container.sh`, package metadata, tarball filename, and npm
-integrity:
+Monitor only through the build job. It must:
+
+- install exact `npm@11.16.0` and assert the exact version;
+- verify the tag, frozen branch SHA, direct `v0.1.2` ancestry, and package
+  metadata;
+- pass `sh tests/container.sh`;
+- run `npm pack --json` exactly once;
+- assert exact tarball contents and integrity;
+- upload exactly `superpowers-manager-0.1.3.tgz`; and
+- leave the publish job waiting at protected environment `npm-bootstrap`.
+
+Inspect the run and logs:
 
 ```sh
-gh run list --workflow release.yml --branch v0.1.2
-gh run view RUN_ID --log
+gh run view RUN_ID \
+  --repo j7an/superpowers-manager \
+  --json databaseId,headBranch,headSha,status,conclusion,url,jobs
+gh run view RUN_ID --repo j7an/superpowers-manager --log
 ```
 
-After explicit first-publication approval only, approve `npm-bootstrap`. The
-publish step alone receives `NPM_BOOTSTRAP_TOKEN`; it publishes the already-built
-tarball with `--access public --provenance`. If the exact version already exists,
-the workflow verifies identical integrity and never republishes it.
+If publication starts without the protected-environment wait, stop. Do not
+approve the environment.
 
-## 7. Verify registry, provenance, npx, and the GitHub release
-
-Do not change trust or the old package until all read-only verification passes:
+Download the pre-publication artifact:
 
 ```sh
-npm view superpowers-manager@0.1.2 name version repository dist-tags dist.integrity dist.attestations --json
-NPM_CONFIG_CACHE=$(mktemp -d)
-export NPM_CONFIG_CACHE
-npx --yes superpowers-manager@0.1.2 --version
-gh release view v0.1.2 --repo j7an/superpowers-manager --json tagName,targetCommitish,assets,url
+artifact_dir=$(mktemp -d)
+gh run download RUN_ID \
+  --repo j7an/superpowers-manager \
+  --name npm-dist \
+  --dir "$artifact_dir"
+artifact="$artifact_dir/superpowers-manager-0.1.3.tgz"
+test -f "$artifact"
 ```
 
-Run `tests/verify_npm_provenance.mjs` with the frozen SHA and observed integrity.
-It must verify the exact package subject, SHA-512 digest, repository, tag ref,
-workflow path, resolved Git commit, and GitHub-hosted runner builder. Download
-the npm and GitHub release tarballs into separate temporary directories and
-compare them byte-for-byte. Run the isolated real-Codex container against the
-published tarball and verify fresh install, update, probe, uninstall, legacy-only,
-manager-only, both-ID, malformed-listing, and offline failure cases.
+Before R3, verify:
+
+- the filename is exactly `superpowers-manager-0.1.3.tgz`;
+- embedded name, version, and repository are exact;
+- the tar entries equal `tests/expected_tarball_contents.txt`;
+- the SHA-512 integrity equals the build output;
+- no generated plugin tree, old bin alias, token, cache, or unrelated file is
+  present; and
+- npm and the GitHub release still report `0.1.3` absent.
+
+Useful read-only inspection commands:
 
 ```sh
-integrity=$(npm view superpowers-manager@0.1.2 dist.integrity)
+tar -tzf "$artifact"
+tar -xOf "$artifact" package/package.json
+npm view superpowers-manager@0.1.3 --json
+gh release view v0.1.3 --repo j7an/superpowers-manager
+```
+
+Any mismatch is a stop condition. Do not rebuild or replace the artifact under
+the same tag.
+
+## 7. Recheck the current Codex schema and strict snapshot
+
+This check occurs after the tag build but before R3. Resolve the then-current
+stable Codex release from official OpenAI sources. Compare its implementation
+with the tested `rust-v0.144.1` baseline, inspecting changed source rather than
+accepting blob inequality alone:
+
+```text
+codex-rs/cli/src/plugin_cmd.rs
+codex-rs/cli/src/marketplace_cmd.rs
+codex-rs/plugin/src/plugin_id.rs
+```
+
+Confirm normal supported JSON listings still guarantee:
+
+- every `installed[]` entry has a non-empty string `pluginId`; and
+- every `marketplaces[]` entry has a non-empty string `name`.
+
+Then confirm the exact tag-build container log shows the unrelated
+`manager-probe@superpowers-manager-probe` plugin and
+`superpowers-manager-probe` marketplace were present while
+`spw_codex_identity_snapshot run_codex` accepted the real listings and reported
+manager identity state `neither`.
+
+If current normal Codex output can omit or null either identifying field, or if
+the real strict-snapshot evidence is absent, stop before publication. Do not
+silently skip unidentified entries and do not defer the defect to a published
+version. Malformed or corrupt state may continue to fail closed.
+
+Record the current Codex version, primary-source URLs or commit, inspected source
+results, tag-build run URL, relevant container log evidence, and decision.
+
+## 8. Recovery Gate R3: approve the protected publication
+
+**STOP — EXTERNAL MUTATION GATE R3**
+
+R3 authorizes only approval of the exact waiting `npm-bootstrap` deployment for
+the reviewed workflow run. It does not authorize another run, another package
+or version, cleanup, trust changes, deprecation, or a dist-tag change.
+
+Present:
+
+- workflow run ID, URL, and exact `"$frozen_sha"`;
+- build success and exact npm version;
+- blocking container result;
+- current Codex schema and real strict-snapshot result;
+- artifact path, exact filename, file list, and integrity;
+- npm and GitHub release absence;
+- the exact workflow publication command
+  `npm publish "$TARBALL" --access public --provenance`; and
+- npm version immutability and the stop-on-mismatch rule.
+
+Do not infer R3 approval from R1 or R2. After explicit R3 approval, approve only
+the pending `npm-bootstrap` deployment for the identified run.
+
+Monitor completion. The publish job must install/assert npm `11.16.0`, download
+the reviewed artifact, expose `NPM_BOOTSTRAP_TOKEN` only to the publish step,
+publish with provenance, poll boundedly for exact integrity, verify a clean
+versioned npx invocation, and verify provenance. The GitHub release job must
+create or verify `v0.1.3` with the same artifact.
+
+Stop on any mismatch. Never republish an immutable npm version and never replace
+a differing release asset.
+
+## 9. Verify registry, provenance, npx, tarballs, release, and container
+
+All checks in this section are read-only with respect to npm and GitHub.
+
+Verify registry metadata and observe, but do not correct, dist-tags:
+
+```sh
+npm view superpowers-manager@0.1.3 \
+  name version repository dist-tags dist.integrity dist.attestations --json
+```
+
+Expected: exact name/version/repository, provenance present, and
+`latest -> 0.1.3`.
+
+Verify clean execution:
+
+```sh
+tmp_cache=$(mktemp -d)
+NPM_CONFIG_CACHE="$tmp_cache" \
+  npx --yes superpowers-manager@0.1.3 --version
+```
+
+Expected: `0.1.3`.
+
+Verify provenance:
+
+```sh
+integrity=$(npm view superpowers-manager@0.1.3 dist.integrity)
 node tests/verify_npm_provenance.mjs \
   superpowers-manager \
-  0.1.2 \
+  0.1.3 \
   https://github.com/j7an/superpowers-manager \
-  refs/tags/v0.1.2 \
+  refs/tags/v0.1.3 \
   .github/workflows/release.yml \
   "$frozen_sha" \
   "$integrity"
 ```
 
-The expected registry state is `latest -> 0.1.2`; this step only observes it.
-Any dist-tag correction or recovery publication is a separate mutation gate.
+The package subject, SHA-512 digest, repository, tag ref, workflow path,
+resolved commit, and GitHub-hosted runner builder must all match.
 
-## 8. Revoke and remove token material after its gate
+Download the npm tarball and GitHub release asset into separate temporary
+directories, compare them byte-for-byte, and verify the release asset digest:
 
-After all Step 7 evidence is approved, explicitly authorize credential cleanup.
-Revoke the one-day npm token, delete `NPM_BOOTSTRAP_TOKEN`, and remove the
-temporary `npm-bootstrap` environment only after confirming no workflow still
-needs it. Verify secret presence or absence by name only; never expose values.
+```sh
+npm_dir=$(mktemp -d)
+release_dir=$(mktemp -d)
+npm pack superpowers-manager@0.1.3 --pack-destination "$npm_dir"
+gh release download v0.1.3 \
+  --repo j7an/superpowers-manager \
+  --pattern superpowers-manager-0.1.3.tgz \
+  --dir "$release_dir"
+cmp \
+  "$npm_dir/superpowers-manager-0.1.3.tgz" \
+  "$release_dir/superpowers-manager-0.1.3.tgz"
+gh release view v0.1.3 \
+  --repo j7an/superpowers-manager \
+  --json tagName,targetCommitish,assets,url
+```
 
-If revocation succeeds but later trust setup fails, do not restore token-based
-publishing.
+Verify the published tarball in the isolated container without registry access:
 
-## 9. Configure trusted publishing and disallow tokens after its gate
+```sh
+npm_tarball="$npm_dir/superpowers-manager-0.1.3.tgz"
+docker run --rm \
+  --network none \
+  --read-only \
+  --tmpfs /tmp:rw,exec,nosuid,size=512m \
+  --tmpfs /home/spw:rw,nosuid,size=128m,uid=10001,gid=10001 \
+  --mount \
+  "type=bind,src=$npm_tarball,dst=/tmp/superpowers-manager.tgz,readonly" \
+  --entrypoint sh \
+  superpowers-manager-test:local \
+  -c 'NPM_CONFIG_CACHE=/tmp/npm-cache npx --yes --offline \
+    --package=/tmp/superpowers-manager.tgz \
+    superpowers-manager --version'
+```
 
-After explicit trust-cutover approval, configure npm interactively with 2FA:
+Expected: `0.1.3`.
+
+From exact tagged source, rerun `sh tests/container.sh` and retain evidence for
+fresh install, update, probe, uninstall, manager-only, legacy-only, both-ID,
+malformed listings, offline failures, and the real strict snapshot. Never
+mutate the operator's real Codex home.
+
+Do not proceed to cleanup until every package, provenance, release, artifact,
+and container result is approved.
+
+## 10. Recovery Gate R4: revoke and remove bootstrap material
+
+**STOP — EXTERNAL MUTATION GATE R4**
+
+R4 authorizes only revocation of the recovery token and removal of
+`NPM_BOOTSTRAP_TOKEN` and `npm-bootstrap` after all publication evidence passes.
+It does not authorize permanent trust configuration or deprecation.
+
+Present the completed verification and identify the exact token, environment
+secret, and temporary environment. After explicit R4 approval only:
+
+1. Revoke the npm token interactively.
+2. Delete environment secret `NPM_BOOTSTRAP_TOKEN`:
+
+   ```sh
+   gh secret delete NPM_BOOTSTRAP_TOKEN \
+     --env npm-bootstrap \
+     --repo j7an/superpowers-manager
+   ```
+
+3. Delete temporary environment `npm-bootstrap`:
+
+   ```sh
+   gh api --method DELETE \
+     repos/j7an/superpowers-manager/environments/npm-bootstrap
+   ```
+
+4. Verify by name only that both are absent and long-lived environments `npm`
+   and `release` remain.
+
+```sh
+gh api repos/j7an/superpowers-manager/environments \
+  --jq '.environments[].name'
+gh secret list --repo j7an/superpowers-manager
+```
+
+Never display the token value. If revocation succeeds but later trust setup
+fails, do not create or restore token-based publishing.
+
+## 11. Recovery Gate R5: configure permanent trusted publishing
+
+**STOP — EXTERNAL MUTATION GATE R5**
+
+R5 authorizes only permanent trust configuration for `superpowers-manager` and
+the package's token-disallow policy. It does not authorize changes to another
+package, deprecation, or a release.
+
+Recheck current official npm trusted-publishing documentation immediately
+before approval. Stop if the required claims or workflow configuration differ
+from:
 
 ```text
 Package: superpowers-manager
@@ -224,66 +533,78 @@ Environment: npm
 Allowed action: npm publish
 ```
 
-Require 2FA and disallow token publishing while retaining OIDC. Verify the normal
-`npm` GitHub environment and its required reviewers without printing secrets:
+Present the exact package, repository, workflow, environment, and policy
+changes. After explicit R5 approval only, configure the trusted publisher
+interactively with 2FA, require 2FA, and disallow token publishing while
+retaining OIDC.
+
+Verify the long-lived `npm` GitHub environment and its required reviewers
+without printing secrets:
 
 ```sh
 gh api repos/j7an/superpowers-manager/environments/npm
 ```
 
-If trusted-publisher setup fails, leave verified `0.1.2` published, keep the
-bootstrap token revoked, block every later release, and resolve trust
-interactively without restoring token publication.
+If trust setup fails, leave verified `0.1.3` published, keep the bootstrap token
+revoked, and block every later release until trust is repaired interactively.
 
-## 10. Deprecate superpowers-wrapper after its gate; never unpublish
+## 12. Recovery Gate R6: deprecate the exact old package
 
-After explicit deprecation approval only, deprecate all existing versions with
-this exact message, interactively with 2FA:
+**STOP — EXTERNAL MUTATION GATE R6**
 
-```sh
-npm deprecate 'superpowers-wrapper@*' 'DEPRECATED: Renamed to superpowers-manager; this package is frozen. Existing installs: run npx superpowers-wrapper@0.1.1 uninstall, then npx superpowers-manager install.'
-```
+R6 authorizes only package-wide deprecation metadata for
+`superpowers-wrapper`. It does not authorize publishing a bridge, unpublishing,
+transferring, deleting, or changing any version.
 
-Never publish an old-name `0.1.2`, unpublish, transfer, or delete an old version.
-Verify both versions remain reproducible and the exact notice is visible:
+First verify only historical versions `0.1.0` and `0.1.1` exist, remain
+installable, and have no conflicting deprecation:
 
 ```sh
-npm view superpowers-wrapper@0.1.0 deprecated version
-npm view superpowers-wrapper@0.1.1 deprecated version
+npm view superpowers-wrapper versions deprecated --json
 npm pack superpowers-wrapper@0.1.0 --pack-destination /tmp
 npm pack superpowers-wrapper@0.1.1 --pack-destination /tmp
 ```
 
-Use clean temporary npm caches to confirm both versions remain installable and
-emit the exact notice. Recheck npm search after its indexing window; absence
-from search is a verification target, never a reason to unpublish.
+Present this exact message:
 
-Record the final state with these read-only checks:
-
-```sh
-npm view superpowers-manager@0.1.2 --json
-npm view superpowers-wrapper versions deprecated --json
-gh repo view j7an/superpowers-manager --json nameWithOwner,url,description,homepageUrl,repositoryTopics
-gh api repos/j7an/superpowers-manager/environments
+```text
+DEPRECATED: Renamed to superpowers-manager; this package is frozen. Existing installs: run npx superpowers-wrapper@0.1.1 uninstall, then npx superpowers-manager install.
 ```
 
-## Failure and recovery rules
+After explicit R6 approval only, deprecate interactively with 2FA:
 
-- If the rename succeeds but npm publication does not, keep the repository
-  renamed and fix the reviewed release path without recreating or reverting
-  namespace identities.
-- If npm reports success but verification lags, retry only read-only registry
-  checks within the bounded window; never republish the same version.
-- If the published tarball differs from the reviewed artifact, stop, preserve
-  evidence, and adjudicate a new version; npm versions and release evidence are
-  never overwritten.
-- If trusted-publisher setup fails, keep `0.1.2`, keep the token revoked, and
-  block later releases until trust is repaired interactively.
-- If deprecation fails, leave old versions published and retry the interactive
-  metadata operation; never substitute unpublishing.
-- If legacy Codex state exists, manager install/update performs no mutation and
-  prints the old uninstall/new install sequence.
-- Never remove or disable another provider automatically.
-- No correction is expected for `latest`. Any dist-tag change, recovery
-  publication, changed tarball, or release-asset replacement requires a new
-  explicit gate with the observed state, exact command, and blast radius.
+```sh
+npm deprecate 'superpowers-wrapper@*' \
+  'DEPRECATED: Renamed to superpowers-manager; this package is frozen. Existing installs: run npx superpowers-wrapper@0.1.1 uninstall, then npx superpowers-manager install.'
+```
+
+Verify both versions retain the exact message, remain packable and installable,
+a clean install emits the warning, and the npm package page displays it.
+Recheck search after npm's normal indexing delay. Search absence is a
+verification target, never a reason to unpublish.
+
+## 13. Failure and further-recovery rules
+
+- If the `v0.1.3` build fails before publication, preserve its tag and run,
+  revoke and remove temporary credentials under a separately approved cleanup,
+  and adjudicate a higher patch version. Never move the failed tag.
+- If npm publication succeeds but verification lags, retry only bounded
+  read-only checks. Never republish `0.1.3`.
+- If the registry artifact differs from the reviewed artifact, stop and
+  preserve evidence. npm versions are immutable.
+- If current normal Codex listings violate the identifying-field contract, stop
+  before publication and design a product fix. Do not silently skip entries.
+- If trusted-publisher setup fails, keep verified `0.1.3` published and the
+  bootstrap token revoked; block later releases.
+- If deprecation fails, leave old versions published and retry only the metadata
+  operation after separate approval. Never unpublish.
+- Any dist-tag correction, release-asset replacement, higher-version recovery,
+  tag-ruleset change, or main-line release requires a separate evidence packet
+  and explicit approval. No R1-R6 approval carries forward to that work.
+- Never publish another `superpowers-wrapper` version, create a replacement
+  old-name repository, weaken branch protection, remove another provider, or
+  import the bootstrap path into modular `main`.
+
+At closeout, confirm again that public `v0.1.2` still resolves to
+`733ddfc0dce4598c65a4945df08f7a0f64d875a4`, failed run 29501874951 remains the
+failed attempt, and no npm version or GitHub release exists for `0.1.2`.

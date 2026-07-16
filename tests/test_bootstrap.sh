@@ -29,6 +29,15 @@ assert_not_contains() {
   fi
 }
 
+assert_not_matches() {
+  path="$1"
+  pattern="$2"
+  if grep -Eq "$pattern" "$root/$path"; then
+    echo "unexpected pattern in $path: $pattern" >&2
+    exit 1
+  fi
+}
+
 assert_file ".gitignore"
 assert_file "config/upstream-ref"
 assert_file ".agents/plugins/marketplace.json"
@@ -71,6 +80,22 @@ assert_contains "README.md" "Install and update prepare and validate before chan
 assert_contains "README.md" "Uninstall inspects and removes only manager-owned Codex state."
 assert_not_contains "README.md" "automatically updates"
 assert_not_contains "README.md" "Claude Code supported"
+
+release_runbook="RELEASING.md"
+assert_contains "$release_runbook" "Releasing Superpowers Manager 0.1.3"
+assert_contains "$release_runbook" "failed run 29501874951"
+assert_contains "$release_runbook" "v0.1.2 must not be moved, deleted, or recreated"
+assert_contains "$release_runbook" "release/0.1.3-manager"
+assert_contains "$release_runbook" "v0.1.3"
+assert_contains "$release_runbook" "npm@11.16.0"
+assert_contains "$release_runbook" 'test "$(npm --version)" = "11.16.0"'
+assert_contains "$release_runbook" "superpowers-manager@0.1.3"
+assert_not_matches "$release_runbook" '(^|[[:space:]])gh[[:space:]]+run[[:space:]]+rerun[^[:cntrl:]]*29501874951'
+assert_not_matches "$release_runbook" '(^|[[:space:]])npm[[:space:]]+publish[^[:cntrl:]]*(0\.1\.2|superpowers-manager-0\.1\.2\.tgz)'
+assert_not_matches "$release_runbook" '(^|[[:space:]])git[[:space:]]+tag([[:space:]]+-[^[:space:]]+)*[[:space:]]+v0\.1\.2([[:space:]]|$)'
+assert_not_matches "$release_runbook" '(^|[[:space:]])git[[:space:]]+push[^[:cntrl:]]*(refs/tags/)?v0\.1\.2'
+assert_not_matches "$release_runbook" '(^|[[:space:]])git[[:space:]]+update-ref[^[:cntrl:]]*refs/tags/v0\.1\.2'
+assert_not_matches "$release_runbook" '(^|[[:space:]])gh[[:space:]]+release[[:space:]]+(create|delete|edit|upload)[^[:cntrl:]]*v0\.1\.2'
 
 manual_probe="tests/manual/codex-behavior-probe.sh"
 assert_contains "$manual_probe" 'marketplace_name="superpowers-manager-probe"'
