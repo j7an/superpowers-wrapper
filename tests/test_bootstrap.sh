@@ -38,6 +38,17 @@ assert_not_matches() {
   fi
 }
 
+assert_count() {
+  path="$1"
+  text="$2"
+  expected="$3"
+  actual=$(grep -Fc "$text" "$root/$path" || true)
+  if [ "$actual" -ne "$expected" ]; then
+    echo "unexpected count in $path for $text: $actual (expected $expected)" >&2
+    exit 1
+  fi
+}
+
 assert_file ".gitignore"
 assert_file "config/upstream-ref"
 assert_file ".agents/plugins/marketplace.json"
@@ -90,6 +101,31 @@ assert_contains "$release_runbook" "v0.1.3"
 assert_contains "$release_runbook" "npm@11.16.0"
 assert_contains "$release_runbook" 'test "$(npm --version)" = "11.16.0"'
 assert_contains "$release_runbook" "superpowers-manager@0.1.3"
+assert_contains "$release_runbook" 'npm_root=$(mktemp -d)'
+assert_contains "$release_runbook" 'NPM_CONFIG_PREFIX="$npm_prefix"'
+assert_contains "$release_runbook" 'NPM_CONFIG_CACHE="$npm_cache"'
+assert_contains "$release_runbook" 'PATH="$npm_prefix/bin:$PATH"'
+assert_contains "$release_runbook" 'test "$(command -v npm)" = "$npm_prefix/bin/npm"'
+assert_contains "$release_runbook" 'trap cleanup_npm EXIT HUP INT TERM'
+assert_contains "$release_runbook" 'npm pack --dry-run --json > "$pack_report"'
+assert_count "$release_runbook" 'npm install --global --ignore-scripts "npm@11.16.0"' 1
+assert_count "$release_runbook" 'npm install --global "npm@11.16.0"' 1
+assert_count "$release_runbook" 'expected_files="$boundary_dir/expected"' 2
+assert_count "$release_runbook" 'actual_files="$boundary_dir/actual"' 2
+assert_count "$release_runbook" 'cmp -s "$expected_files" "$actual_files"' 2
+assert_count "$release_runbook" 'diff -u "$expected_files" "$actual_files"' 2
+assert_contains "$release_runbook" 'git diff --name-only v0.1.2...HEAD'
+assert_contains "$release_runbook" 'git diff --name-only v0.1.2..."$frozen_sha"'
+assert_contains "$release_runbook" 'git show "$frozen_sha:tests/container/codex-offline-probe.sh"'
+assert_contains "$release_runbook" 'snapshot=$(spw_codex_identity_snapshot run_codex)'
+assert_contains "$release_runbook" 'test "$(spw_snapshot_get "$snapshot" identity_state)" = "neither"'
+assert_contains "$release_runbook" 'codex offline probe: OK'
+assert_contains "$release_runbook" 'artifact_integrity=$(node - "$artifact"'
+assert_contains "$release_runbook" "createHash('sha512')"
+assert_contains "$release_runbook" 'printf '\''artifact_integrity=%s\n'\'' "$artifact_integrity"'
+assert_contains "$release_runbook" 'test "$registry_integrity" = "$artifact_integrity"'
+assert_not_contains "$release_runbook" "SHA-512 integrity equals the build output"
+assert_not_contains "$release_runbook" "reported manager identity state"
 assert_not_matches "$release_runbook" '(^|[[:space:]])gh[[:space:]]+run[[:space:]]+rerun[^[:cntrl:]]*29501874951'
 assert_not_matches "$release_runbook" '(^|[[:space:]])npm[[:space:]]+publish[^[:cntrl:]]*(0\.1\.2|superpowers-manager-0\.1\.2\.tgz)'
 assert_not_matches "$release_runbook" '(^|[[:space:]])git[[:space:]]+tag([[:space:]]+-[^[:space:]]+)*[[:space:]]+v0\.1\.2([[:space:]]|$)'

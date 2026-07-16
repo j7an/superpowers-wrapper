@@ -64,10 +64,17 @@ The recovery line is `release/0.1.3-manager`, created from exact public tag
 `release/0.1.3-manager`, never `main`. Repository policy remains squash-only
 with linear history.
 
-The complete tracked recovery diff from `v0.1.2` is restricted to this exact
-allowlist:
+The complete tracked recovery diff from `v0.1.2` is restricted to an exact
+allowlist. Before approval, compare the actual sorted diff to the expected
+sorted list programmatically:
 
-```text
+```sh
+set -eu
+boundary_dir=$(mktemp -d)
+trap 'rm -rf "$boundary_dir"' EXIT HUP INT TERM
+expected_files="$boundary_dir/expected"
+actual_files="$boundary_dir/actual"
+cat > "$expected_files" <<'EOF'
 .github/workflows/release.yml
 README.md
 RELEASING.md
@@ -78,15 +85,15 @@ tests/test_bootstrap.sh
 tests/test_identity_state.sh
 tests/test_release_workflow.sh
 tests/test_verify_npm_provenance.mjs
-```
-
-Before approval, inspect the exact diff and require its sorted file list to
-equal the allowlist:
-
-```sh
+EOF
 git fetch origin release/0.1.3-manager --tags
 git diff --name-status v0.1.2...HEAD
-git diff --name-only v0.1.2...HEAD | LC_ALL=C sort
+git diff --name-only v0.1.2...HEAD |
+  LC_ALL=C sort > "$actual_files"
+cmp -s "$expected_files" "$actual_files" || {
+  diff -u "$expected_files" "$actual_files"
+  exit 1
+}
 git diff --check v0.1.2...HEAD
 git log --oneline --decorate v0.1.2..HEAD
 ```
@@ -104,11 +111,33 @@ After explicit PR approval, squash-merge into `release/0.1.3-manager`. Then
 fetch and freeze the full post-squash remote head SHA:
 
 ```sh
+set -eu
+boundary_dir=$(mktemp -d)
+trap 'rm -rf "$boundary_dir"' EXIT HUP INT TERM
+expected_files="$boundary_dir/expected"
+actual_files="$boundary_dir/actual"
+cat > "$expected_files" <<'EOF'
+.github/workflows/release.yml
+README.md
+RELEASING.md
+package.json
+scripts/lib.sh
+tests/container/codex-offline-probe.sh
+tests/test_bootstrap.sh
+tests/test_identity_state.sh
+tests/test_release_workflow.sh
+tests/test_verify_npm_provenance.mjs
+EOF
 git fetch origin release/0.1.3-manager --tags
 frozen_sha=$(git rev-parse origin/release/0.1.3-manager)
 test "$(git rev-parse "$frozen_sha^")" = "$(git rev-parse v0.1.2)"
 git show --stat --oneline "$frozen_sha"
-git diff --name-only v0.1.2..."$frozen_sha" | LC_ALL=C sort
+git diff --name-only v0.1.2..."$frozen_sha" |
+  LC_ALL=C sort > "$actual_files"
+cmp -s "$expected_files" "$actual_files" || {
+  diff -u "$expected_files" "$actual_files"
+  exit 1
+}
 ```
 
 Record `frozen_sha`. Do not force-push or add another commit after it is frozen.
@@ -146,12 +175,30 @@ throwaway container:
 sh tests/container.sh
 ```
 
-Install and verify the exact reviewed npm version before the package dry run:
+Install the exact reviewed npm version into an isolated temporary prefix and
+cache. Fail fast, put only that temporary npm first on `PATH`, verify its exact
+version, run the package dry run, and clean the temporary state on every exit:
 
 ```sh
-npm install --global "npm@11.16.0"
+set -eu
+npm_root=$(mktemp -d)
+npm_prefix="$npm_root/prefix"
+npm_cache="$npm_root/cache"
+pack_report="$npm_root/pack.json"
+mkdir -p "$npm_prefix" "$npm_cache"
+cleanup_npm() {
+  rm -rf "$npm_root"
+}
+trap cleanup_npm EXIT HUP INT TERM
+NPM_CONFIG_PREFIX="$npm_prefix" \
+  NPM_CONFIG_CACHE="$npm_cache" \
+  npm install --global --ignore-scripts "npm@11.16.0"
+PATH="$npm_prefix/bin:$PATH"
+NPM_CONFIG_PREFIX="$npm_prefix"
+NPM_CONFIG_CACHE="$npm_cache"
+export PATH NPM_CONFIG_PREFIX NPM_CONFIG_CACHE
+test "$(command -v npm)" = "$npm_prefix/bin/npm"
 test "$(npm --version)" = "11.16.0"
-pack_report=$(mktemp)
 npm pack --dry-run --json > "$pack_report"
 sh tests/assert_pack_contents.sh "$pack_report"
 git diff --check
@@ -162,13 +209,11 @@ The package report must describe exactly one npm-11 array entry, version
 `0.1.3`, filename `superpowers-manager-0.1.3.tgz`, and only the files in
 `tests/expected_tarball_contents.txt`. The checkout must remain clean.
 
-Confirm `.github/workflows/release.yml` contains exact installation and version
-checks in both the build and publish jobs:
-
-```sh
-npm install --global "npm@11.16.0"
-test "$(npm --version)" = "11.16.0"
-```
+`sh tests/test_release_workflow.sh` is the structural authority for
+`.github/workflows/release.yml`. It must prove that build and publish each
+contain exactly one `npm install --global "npm@11.16.0"` and the exact
+`test "$(npm --version)" = "11.16.0"` assertion. Do not execute the workflow
+installer again merely to inspect workflow text.
 
 Ranges, npm 12, alternate versions, extra npm installers, parser broadening,
 generated plugin content, main-line code, and any file outside the allowlist
@@ -298,6 +343,19 @@ gh run download RUN_ID \
   --dir "$artifact_dir"
 artifact="$artifact_dir/superpowers-manager-0.1.3.tgz"
 test -f "$artifact"
+artifact_integrity=$(node - "$artifact" <<'NODE'
+const crypto = require('node:crypto');
+const fs = require('node:fs');
+const artifact = fs.readFileSync(process.argv[2]);
+const digest = crypto.createHash('sha512').update(artifact).digest('base64');
+process.stdout.write(`sha512-${digest}\n`);
+NODE
+)
+case "$artifact_integrity" in
+  sha512-*) ;;
+  *) echo "invalid artifact integrity: $artifact_integrity" >&2; exit 1 ;;
+esac
+printf 'artifact_integrity=%s\n' "$artifact_integrity"
 ```
 
 Before R3, verify:
@@ -305,7 +363,8 @@ Before R3, verify:
 - the filename is exactly `superpowers-manager-0.1.3.tgz`;
 - embedded name, version, and repository are exact;
 - the tar entries equal `tests/expected_tarball_contents.txt`;
-- the SHA-512 integrity equals the build output;
+- the computed `artifact_integrity` is recorded with the artifact and run
+  evidence;
 - no generated plugin tree, old bin alias, token, cache, or unrelated file is
   present; and
 - npm and the GitHub release still report `0.1.3` absent.
@@ -340,11 +399,31 @@ Confirm normal supported JSON listings still guarantee:
 - every `installed[]` entry has a non-empty string `pluginId`; and
 - every `marketplaces[]` entry has a non-empty string `name`.
 
-Then confirm the exact tag-build container log shows the unrelated
-`manager-probe@superpowers-manager-probe` plugin and
-`superpowers-manager-probe` marketplace were present while
-`spw_codex_identity_snapshot run_codex` accepted the real listings and reported
-manager identity state `neither`.
+Inspect the exact frozen probe source and prove that the strict snapshot call
+and `neither` assertion are present:
+
+```sh
+probe_source=$(mktemp)
+git show "$frozen_sha:tests/container/codex-offline-probe.sh" > "$probe_source"
+grep -Fqx \
+  'snapshot=$(spw_codex_identity_snapshot run_codex)' \
+  "$probe_source"
+grep -Fqx \
+  'test "$(spw_snapshot_get "$snapshot" identity_state)" = "neither"' \
+  "$probe_source"
+```
+
+The tag-build log does not print the snapshot identities or state. It proves
+only that the frozen probe, including those fail-fast assertions, completed:
+
+```sh
+gh run view RUN_ID --repo j7an/superpowers-manager --log |
+  grep -F 'codex offline probe: OK'
+```
+
+Together, the frozen source and terminal success line prove the strict
+`spw_codex_identity_snapshot run_codex` plus `neither` assertion executed
+successfully while the probe plugin and marketplace were installed.
 
 If current normal Codex output can omit or null either identifying field, or if
 the real strict-snapshot evidence is absent, stop before publication. Do not
@@ -368,7 +447,8 @@ Present:
 - build success and exact npm version;
 - blocking container result;
 - current Codex schema and real strict-snapshot result;
-- artifact path, exact filename, file list, and integrity;
+- artifact path, exact filename, file list, and the directly computed recorded
+  `artifact_integrity`;
 - npm and GitHub release absence;
 - the exact workflow publication command
   `npm publish "$TARBALL" --access public --provenance`; and
@@ -400,6 +480,15 @@ npm view superpowers-manager@0.1.3 \
 Expected: exact name/version/repository, provenance present, and
 `latest -> 0.1.3`.
 
+Restore the exact pre-publication SRI recorded for R3, then require the registry
+integrity to equal it:
+
+```sh
+artifact_integrity='RECORDED_PREPUBLICATION_SHA512_SRI'
+registry_integrity=$(npm view superpowers-manager@0.1.3 dist.integrity)
+test "$registry_integrity" = "$artifact_integrity"
+```
+
 Verify clean execution:
 
 ```sh
@@ -413,7 +502,6 @@ Expected: `0.1.3`.
 Verify provenance:
 
 ```sh
-integrity=$(npm view superpowers-manager@0.1.3 dist.integrity)
 node tests/verify_npm_provenance.mjs \
   superpowers-manager \
   0.1.3 \
@@ -421,7 +509,7 @@ node tests/verify_npm_provenance.mjs \
   refs/tags/v0.1.3 \
   .github/workflows/release.yml \
   "$frozen_sha" \
-  "$integrity"
+  "$registry_integrity"
 ```
 
 The package subject, SHA-512 digest, repository, tag ref, workflow path,
