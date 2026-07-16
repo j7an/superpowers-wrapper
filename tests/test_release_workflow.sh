@@ -2,7 +2,7 @@
 set -eu
 
 root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
-wf="$root/.github/workflows/release.yml"
+wf=${1:-"$root/.github/workflows/release.yml"}
 
 [ -f "$wf" ] || { echo "missing $wf" >&2; exit 1; }
 
@@ -52,7 +52,9 @@ on_keys = ["on", true].select { |key| workflow.key?(key) }
 raise "expected exactly one active on mapping" unless on_keys.length == 1
 
 on_config = expect_hash(fetch(workflow, on_keys.fetch(0), "on"), "on")
+expect_equal(on_config.keys, ["push"], "on keys")
 push = expect_hash(fetch(on_config, "push", "on.push"), "on.push")
+expect_equal(push.keys, ["tags"], "on.push keys")
 expect_equal(fetch(push, "tags", "on.push.tags"), ["v0.1.3"], "on.push.tags")
 
 expect_equal(fetch(workflow, "permissions", "permissions"), {}, "permissions")
@@ -133,31 +135,55 @@ source_check = step_run(build, "Verify frozen release source")
   'test "$branch_sha" = "$GITHUB_SHA"',
   'git merge-base --is-ancestor v0.1.2 "$GITHUB_SHA"',
   'test "$(git rev-parse "$GITHUB_SHA^")" = "$(git rev-parse v0.1.2)"',
-  'superpowers-manager',
-  '0.1.3',
-  'git+https://github.com/j7an/superpowers-manager.git',
 ].each do |needle|
   raise "source check missing #{needle.inspect}" unless source_check.include?(needle)
+end
+source_lines = source_check.lines.map(&:strip)
+[
+  "assert.equal(pkg.name, 'superpowers-manager');",
+  "assert.equal(pkg.version, '0.1.3');",
+].each do |line|
+  raise "source check missing exact assertion line #{line.inspect}" unless source_lines.include?(line)
+end
+expected_repository_assertion = <<~'NODE'.strip
+  assert.equal(
+    pkg.repository.url,
+    'git+https://github.com/j7an/superpowers-manager.git',
+  );
+NODE
+unless source_check.include?(expected_repository_assertion)
+  raise "source check missing exact repository assertion"
 end
 
 expect_equal(step_run(build, "Run isolated acceptance suite").strip, "sh tests/container.sh", "container test command")
 
 all_runs = jobs.values.flat_map { |job| job.fetch("steps", []).map { |step| step["run"] }.compact }.join("\n")
-npm_specs = all_runs.scan(/npm install --global "npm@([^"]+)"/).flatten
-unless npm_specs == ["11.16.0", "11.16.0"]
-  warn "npm installer specs must be exactly 11.16.0 twice; ranges and alternate versions are forbidden"
-end
+expected_npm_setup = <<~'SH'.strip
+  npm install --global "npm@11.16.0"
+  test "$(npm --version)" = "11.16.0"
+SH
 expect_equal(
-  npm_specs,
-  ["11.16.0", "11.16.0"],
-  "exact npm installer specs",
+  step_run(build, "Ensure npm provenance support").strip,
+  expected_npm_setup,
+  "build exact npm setup",
+)
+expect_equal(
+  step_run(publish, "Ensure npm provenance support").strip,
+  expected_npm_setup,
+  "publish exact npm setup",
 )
 
-npm_version_assertion = 'test "$(npm --version)" = "11.16.0"'
+global_npm_installs = all_runs.lines.map do |line|
+  stripped = line.strip
+  stripped if stripped.match?(/\bnpm\s+install\s+--global\b/)
+end.compact
+unless global_npm_installs == Array.new(2, 'npm install --global "npm@11.16.0"')
+  warn "npm install --global must occur exactly once in each named npm setup step; ranges, alternate quoting, alternate versions, and extra installers are forbidden"
+end
 expect_equal(
-  all_runs.scan(npm_version_assertion).length,
-  2,
-  "exact npm version assertions",
+  global_npm_installs,
+  Array.new(2, 'npm install --global "npm@11.16.0"'),
+  "all global npm installer commands",
 )
 raise "workflow must run npm pack --json exactly once" unless all_runs.scan(/npm pack --json/).length == 1
 pack = step_run(build, "Pack and assert artifact")
@@ -224,7 +250,7 @@ expect_equal(fetch(poll_env, "VERSION", "poll VERSION"), "0.1.3", "poll VERSION"
 
 npx = step_run(publish, "Verify clean npx execution")
 raise "npx check must use a new temporary cache" unless npx.include?('NPM_CONFIG_CACHE=$(mktemp -d)')
-raise "missing exact npx check" unless npx.include?('npx --yes superpowers-manager@0.1.3 --version')
+raise "missing exact npx check" unless npx.include?('test "$(npx --yes superpowers-manager@0.1.3 --version)" = "0.1.3"')
 
 provenance = step_run(publish, "Verify npm provenance")
 [
