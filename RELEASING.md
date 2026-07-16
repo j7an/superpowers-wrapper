@@ -366,10 +366,53 @@ gh secret set NPM_BOOTSTRAP_TOKEN \
 Verify presence by name only:
 
 ```sh
-gh api repos/j7an/superpowers-manager/environments/npm-bootstrap
+verification_dir=$(mktemp -d)
+trap 'rm -rf "$verification_dir"' EXIT HUP INT TERM
+environment_json="$verification_dir/environment.json"
+environment_secrets_json="$verification_dir/environment-secrets.json"
+repository_secrets_json="$verification_dir/repository-secrets.json"
+gh api repos/j7an/superpowers-manager/environments/npm-bootstrap \
+  > "$environment_json"
 gh api \
   repos/j7an/superpowers-manager/environments/npm-bootstrap/secrets \
-  --jq '.secrets[].name'
+  > "$environment_secrets_json"
+gh api repos/j7an/superpowers-manager/actions/secrets \
+  > "$repository_secrets_json"
+python3 - \
+  "$environment_json" \
+  "$environment_secrets_json" \
+  "$repository_secrets_json" <<'PY'
+import json
+import sys
+
+environment_path, environment_secrets_path, repository_secrets_path = sys.argv[1:]
+with open(environment_path, encoding="utf-8") as stream:
+    environment = json.load(stream)
+with open(environment_secrets_path, encoding="utf-8") as stream:
+    environment_secrets = json.load(stream)
+with open(repository_secrets_path, encoding="utf-8") as stream:
+    repository_secrets = json.load(stream)
+
+approved_reviewer = "j7an"
+reviewer_logins = {
+    reviewer["reviewer"]["login"]
+    for rule in environment.get("protection_rules", [])
+    if rule.get("type") == "required_reviewers"
+    for reviewer in rule.get("reviewers", [])
+    if reviewer.get("type") == "User"
+    and isinstance(reviewer.get("reviewer"), dict)
+}
+assert approved_reviewer == "j7an"
+assert "j7an" in reviewer_logins
+environment_secret_names = {
+    secret["name"] for secret in environment_secrets.get("secrets", [])
+}
+repository_secret_names = {
+    secret["name"] for secret in repository_secrets.get("secrets", [])
+}
+assert environment_secret_names == {"NPM_BOOTSTRAP_TOKEN"}
+assert "NPM_BOOTSTRAP_TOKEN" not in repository_secret_names
+PY
 ```
 
 Stop after verification and request R2 separately.
@@ -414,6 +457,59 @@ git show "$frozen_sha:.github/workflows/release.yml"
 
 The remote lookup must report tag absence. The package must be exactly
 `superpowers-manager@0.1.3`; the workflow must trigger only `v0.1.3`.
+Repeat the protected-environment boundary check immediately before requesting
+R2 so the tag cannot start a workflow whose publish job lacks the approved R3
+reviewer gate:
+
+```sh
+verification_dir=$(mktemp -d)
+trap 'rm -rf "$verification_dir"' EXIT HUP INT TERM
+environment_json="$verification_dir/environment.json"
+environment_secrets_json="$verification_dir/environment-secrets.json"
+repository_secrets_json="$verification_dir/repository-secrets.json"
+gh api repos/j7an/superpowers-manager/environments/npm-bootstrap \
+  > "$environment_json"
+gh api \
+  repos/j7an/superpowers-manager/environments/npm-bootstrap/secrets \
+  > "$environment_secrets_json"
+gh api repos/j7an/superpowers-manager/actions/secrets \
+  > "$repository_secrets_json"
+python3 - \
+  "$environment_json" \
+  "$environment_secrets_json" \
+  "$repository_secrets_json" <<'PY'
+import json
+import sys
+
+environment_path, environment_secrets_path, repository_secrets_path = sys.argv[1:]
+with open(environment_path, encoding="utf-8") as stream:
+    environment = json.load(stream)
+with open(environment_secrets_path, encoding="utf-8") as stream:
+    environment_secrets = json.load(stream)
+with open(repository_secrets_path, encoding="utf-8") as stream:
+    repository_secrets = json.load(stream)
+
+approved_reviewer = "j7an"
+reviewer_logins = {
+    reviewer["reviewer"]["login"]
+    for rule in environment.get("protection_rules", [])
+    if rule.get("type") == "required_reviewers"
+    for reviewer in rule.get("reviewers", [])
+    if reviewer.get("type") == "User"
+    and isinstance(reviewer.get("reviewer"), dict)
+}
+assert approved_reviewer == "j7an"
+assert "j7an" in reviewer_logins
+environment_secret_names = {
+    secret["name"] for secret in environment_secrets.get("secrets", [])
+}
+repository_secret_names = {
+    secret["name"] for secret in repository_secrets.get("secrets", [])
+}
+assert environment_secret_names == {"NPM_BOOTSTRAP_TOKEN"}
+assert "NPM_BOOTSTRAP_TOKEN" not in repository_secret_names
+PY
+```
 
 Present the exact tag, full SHA, immutable-tag consequence, and workflow that
 will start. After explicit R2 approval only:
@@ -477,6 +573,37 @@ case "$artifact_integrity" in
   *) echo "invalid artifact integrity: $artifact_integrity" >&2; exit 1 ;;
 esac
 printf 'artifact_integrity=%s\n' "$artifact_integrity"
+python3 - "$artifact" tests/expected_tarball_contents.txt <<'PY'
+# BEGIN PRE_R3_TARBALL_VERIFIER
+import json
+import sys
+import tarfile
+
+artifact_path, expected_path = sys.argv[1:]
+with open(expected_path, encoding="utf-8") as stream:
+    expected_files = sorted(
+        line.strip()
+        for line in stream
+        if line.strip() and not line.lstrip().startswith("#")
+    )
+
+with tarfile.open(artifact_path, "r:gz") as archive:
+    regular_members = [member for member in archive.getmembers() if member.isfile()]
+    assert all(member.name.startswith("package/") for member in regular_members)
+    actual_files = sorted(
+        member.name.removeprefix("package/") for member in regular_members
+    )
+    assert actual_files == expected_files
+    package_member = archive.getmember("package/package.json")
+    package_stream = archive.extractfile(package_member)
+    assert package_stream is not None
+    package = json.load(package_stream)
+
+assert package["name"] == "superpowers-manager"
+assert package["version"] == "0.1.3"
+assert package["repository"]["url"] == "git+https://github.com/j7an/superpowers-manager.git"
+# END PRE_R3_TARBALL_VERIFIER
+PY
 ```
 
 Before R3, verify:
@@ -541,8 +668,6 @@ require_release_absent() {
       ;;
   esac
 }
-tar -tzf "$artifact"
-tar -xOf "$artifact" package/package.json
 require_npm_absent superpowers-manager@0.1.3
 require_release_absent v0.1.3
 ```
@@ -639,38 +764,59 @@ a differing release asset.
 
 All checks in this section are read-only with respect to npm and GitHub.
 
-Verify registry metadata and observe, but do not correct, dist-tags:
+Restore the exact pre-publication SRI recorded for R3, then parse and assert
+every required registry field rather than printing it for visual inspection:
 
 ```sh
-npm view superpowers-manager@0.1.3 \
-  name version repository dist-tags dist.integrity dist.attestations --json
-```
-
-Expected: exact name/version/repository, provenance present, and
-`latest -> 0.1.3`.
-
-Restore the exact pre-publication SRI recorded for R3, then require the registry
-integrity to equal it:
-
-```sh
+set -eu
 artifact_integrity='RECORDED_PREPUBLICATION_SHA512_SRI'
-registry_integrity=$(npm view superpowers-manager@0.1.3 dist.integrity)
-test "$registry_integrity" = "$artifact_integrity"
-```
-
-Verify clean execution:
-
-```sh
+registry_json=$(mktemp)
 tmp_cache=$(mktemp -d)
-NPM_CONFIG_CACHE="$tmp_cache" \
-  npx --yes superpowers-manager@0.1.3 --version
-```
+cleanup_post_publish() {
+  rm -rf "$registry_json" "$tmp_cache"
+}
+trap cleanup_post_publish EXIT HUP INT TERM
+npm view superpowers-manager@0.1.3 \
+  name version repository dist-tags dist.integrity dist.attestations --json \
+  > "$registry_json"
+python3 - "$registry_json" "$artifact_integrity" <<'PY'
+import json
+import sys
 
-Expected: `0.1.3`.
+metadata_path, expected_integrity = sys.argv[1:]
+with open(metadata_path, encoding="utf-8") as stream:
+    metadata = json.load(stream)
+
+expected_attestations_url = (
+    "https://registry.npmjs.org/-/npm/v1/attestations/"
+    "superpowers-manager@0.1.3"
+)
+assert metadata["name"] == "superpowers-manager"
+assert metadata["version"] == "0.1.3"
+assert metadata["repository"]["url"] == "git+https://github.com/j7an/superpowers-manager.git"
+assert metadata["dist-tags"]["latest"] == "0.1.3"
+assert metadata["dist.integrity"] == expected_integrity
+assert metadata["dist.attestations"]["url"] == expected_attestations_url
+assert metadata["dist.attestations"]["provenance"] == {
+    "predicateType": "https://slsa.dev/provenance/v1"
+}
+PY
+registry_integrity=$(python3 - "$registry_json" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as stream:
+    print(json.load(stream)["dist.integrity"])
+PY
+)
+test "$registry_integrity" = "$artifact_integrity"
+test "$(NPM_CONFIG_CACHE="$tmp_cache" npx --yes superpowers-manager@0.1.3 --version)" = "0.1.3"
+```
 
 Verify provenance:
 
 ```sh
+registry_integrity=$(npm view superpowers-manager@0.1.3 dist.integrity)
 node tests/verify_npm_provenance.mjs \
   superpowers-manager \
   0.1.3 \
@@ -684,12 +830,19 @@ node tests/verify_npm_provenance.mjs \
 The package subject, SHA-512 digest, repository, tag ref, workflow path,
 resolved commit, and GitHub-hosted runner builder must all match.
 
-Download the npm tarball and GitHub release asset into separate temporary
-directories, compare them byte-for-byte, and verify the release asset digest:
+Download the npm tarball and GitHub release asset into the isolated temporary
+directories, compare them byte-for-byte, and parse the release JSON to assert
+the exact tag, title, sole asset, and SHA-256 digest:
 
 ```sh
+set -eu
 npm_dir=$(mktemp -d)
 release_dir=$(mktemp -d)
+release_json=$(mktemp)
+cleanup_release_verification() {
+  rm -rf "$npm_dir" "$release_dir" "$release_json"
+}
+trap cleanup_release_verification EXIT HUP INT TERM
 npm pack superpowers-manager@0.1.3 --pack-destination "$npm_dir"
 gh release download v0.1.3 \
   --repo j7an/superpowers-manager \
@@ -700,7 +853,24 @@ cmp \
   "$release_dir/superpowers-manager-0.1.3.tgz"
 gh release view v0.1.3 \
   --repo j7an/superpowers-manager \
-  --json tagName,targetCommitish,assets,url
+  --json tagName,name,assets,url > "$release_json"
+release_digest="sha256:$(sha256sum \
+  "$release_dir/superpowers-manager-0.1.3.tgz" | cut -d ' ' -f 1)"
+python3 - "$release_json" "$release_digest" <<'PY'
+import json
+import sys
+
+release_path, expected_digest = sys.argv[1:]
+with open(release_path, encoding="utf-8") as stream:
+    release = json.load(stream)
+
+assert release["tagName"] == "v0.1.3"
+assert release["name"] == "Superpowers Manager 0.1.3"
+assert len(release["assets"]) == 1
+asset = release["assets"][0]
+assert asset["name"] == "superpowers-manager-0.1.3.tgz"
+assert asset["digest"] == expected_digest
+PY
 ```
 
 Verify the published tarball in the isolated container without registry access:
@@ -758,13 +928,62 @@ secret, and temporary environment. After explicit R4 approval only:
      repos/j7an/superpowers-manager/environments/npm-bootstrap
    ```
 
-4. Verify by name only that both are absent and long-lived environments `npm`
-   and `release` remain.
+4. Verify fail closed that the temporary environment returns HTTP 404, the
+   repository-scope bootstrap secret is absent, and long-lived environments
+   `npm` and `release` remain.
 
 ```sh
-gh api repos/j7an/superpowers-manager/environments \
-  --jq '.environments[].name'
-gh secret list --repo j7an/superpowers-manager
+set -eu
+require_environment_absent() {
+  environment_name=$1
+  if environment_absence_output=$(
+    gh api \
+      "repos/j7an/superpowers-manager/environments/$environment_name" \
+      --silent 2>&1
+  ); then
+    printf 'unexpected GitHub environment exists: %s\n' \
+      "$environment_name" >&2
+    exit 1
+  else
+    environment_absence_status=$?
+  fi
+  case "$environment_absence_output" in
+    *"HTTP 404"*) ;;
+    *)
+      printf 'GitHub environment absence check failed with status %s:\n%s\n' \
+        "$environment_absence_status" "$environment_absence_output" >&2
+      exit 1
+      ;;
+  esac
+}
+require_environment_absent npm-bootstrap
+verification_dir=$(mktemp -d)
+trap 'rm -rf "$verification_dir"' EXIT HUP INT TERM
+environments_json="$verification_dir/environments.json"
+repository_secrets_json="$verification_dir/repository-secrets.json"
+gh api repos/j7an/superpowers-manager/environments > "$environments_json"
+gh api repos/j7an/superpowers-manager/actions/secrets \
+  > "$repository_secrets_json"
+python3 - "$environments_json" "$repository_secrets_json" <<'PY'
+import json
+import sys
+
+environments_path, repository_secrets_path = sys.argv[1:]
+with open(environments_path, encoding="utf-8") as stream:
+    environments = json.load(stream)
+with open(repository_secrets_path, encoding="utf-8") as stream:
+    repository_secrets = json.load(stream)
+
+environment_names = {
+    environment["name"] for environment in environments.get("environments", [])
+}
+repository_secret_names = {
+    secret["name"] for secret in repository_secrets.get("secrets", [])
+}
+assert {"npm", "release"}.issubset(environment_names)
+assert "npm-bootstrap" not in environment_names
+assert "NPM_BOOTSTRAP_TOKEN" not in repository_secret_names
+PY
 ```
 
 Never display the token value. If revocation succeeds but later trust setup

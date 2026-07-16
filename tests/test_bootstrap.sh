@@ -133,13 +133,50 @@ assert_contains "$release_runbook" 'artifact_integrity=$(node - "$artifact"'
 assert_contains "$release_runbook" "createHash('sha512')"
 assert_contains "$release_runbook" 'printf '\''artifact_integrity=%s\n'\'' "$artifact_integrity"'
 assert_contains "$release_runbook" 'test "$registry_integrity" = "$artifact_integrity"'
+assert_contains "$release_runbook" 'python3 - "$artifact" tests/expected_tarball_contents.txt <<'\''PY'\'''
+assert_contains "$release_runbook" '# BEGIN PRE_R3_TARBALL_VERIFIER'
+assert_contains "$release_runbook" '# END PRE_R3_TARBALL_VERIFIER'
+assert_contains "$release_runbook" 'with tarfile.open(artifact_path, "r:gz") as archive:'
+assert_contains "$release_runbook" 'member.name.removeprefix("package/")'
+assert_contains "$release_runbook" 'assert actual_files == expected_files'
+assert_contains "$release_runbook" 'assert package["name"] == "superpowers-manager"'
+assert_contains "$release_runbook" 'assert package["version"] == "0.1.3"'
+assert_contains "$release_runbook" 'assert package["repository"]["url"] == "git+https://github.com/j7an/superpowers-manager.git"'
+assert_not_contains "$release_runbook" 'tar -tzf "$artifact"'
+assert_not_contains "$release_runbook" 'tar -xOf "$artifact" package/package.json'
+assert_count "$release_runbook" 'approved_reviewer = "j7an"' 2
+assert_count "$release_runbook" 'assert "j7an" in reviewer_logins' 2
+assert_count "$release_runbook" 'assert environment_secret_names == {"NPM_BOOTSTRAP_TOKEN"}' 2
+assert_count "$release_runbook" 'assert "NPM_BOOTSTRAP_TOKEN" not in repository_secret_names' 3
+assert_count "$release_runbook" 'repos/j7an/superpowers-manager/environments/npm-bootstrap/secrets' 2
+assert_count "$release_runbook" 'repos/j7an/superpowers-manager/actions/secrets' 3
+assert_contains "$release_runbook" 'require_environment_absent npm-bootstrap'
+assert_contains "$release_runbook" 'assert {"npm", "release"}.issubset(environment_names)'
+assert_contains "$release_runbook" 'registry_json=$(mktemp)'
+assert_contains "$release_runbook" 'npm view superpowers-manager@0.1.3 \'
+assert_contains "$release_runbook" 'assert metadata["name"] == "superpowers-manager"'
+assert_contains "$release_runbook" 'assert metadata["version"] == "0.1.3"'
+assert_contains "$release_runbook" 'assert metadata["repository"]["url"] == "git+https://github.com/j7an/superpowers-manager.git"'
+assert_contains "$release_runbook" 'assert metadata["dist-tags"]["latest"] == "0.1.3"'
+assert_contains "$release_runbook" 'assert metadata["dist.integrity"] == expected_integrity'
+assert_contains "$release_runbook" 'assert metadata["dist.attestations"]["url"] == expected_attestations_url'
+assert_contains "$release_runbook" 'assert metadata["dist.attestations"]["provenance"] == {'
+assert_contains "$release_runbook" '"predicateType": "https://slsa.dev/provenance/v1"'
+assert_contains "$release_runbook" 'test "$(NPM_CONFIG_CACHE="$tmp_cache" npx --yes superpowers-manager@0.1.3 --version)" = "0.1.3"'
+assert_contains "$release_runbook" 'trap cleanup_post_publish EXIT HUP INT TERM'
+assert_contains "$release_runbook" 'release_json=$(mktemp)'
+assert_contains "$release_runbook" 'assert release["tagName"] == "v0.1.3"'
+assert_contains "$release_runbook" 'assert release["name"] == "Superpowers Manager 0.1.3"'
+assert_contains "$release_runbook" 'assert len(release["assets"]) == 1'
+assert_contains "$release_runbook" 'assert asset["name"] == "superpowers-manager-0.1.3.tgz"'
+assert_contains "$release_runbook" 'assert asset["digest"] == expected_digest'
 assert_count "$release_runbook" 'require_npm_absent() {' 3
 assert_count "$release_runbook" 'case "$npm_absence_output" in' 6
 assert_count "$release_runbook" '*E404*) ;;' 3
 assert_count "$release_runbook" '*"$package_spec"*) ;;' 3
 assert_count "$release_runbook" 'require_release_absent() {' 2
 assert_count "$release_runbook" 'gh api "repos/j7an/superpowers-manager/releases/tags/$release_tag" --silent' 2
-assert_count "$release_runbook" '*"HTTP 404"*) ;;' 2
+assert_count "$release_runbook" '*"HTTP 404"*) ;;' 3
 assert_count "$release_runbook" 'require_remote_tag_absent() {' 2
 assert_count "$release_runbook" 'git ls-remote --exit-code origin "refs/tags/$remote_tag"' 2
 assert_count "$release_runbook" 'if [ "$remote_tag_status" -ne 2 ]; then' 2
@@ -162,6 +199,32 @@ assert_not_matches "$release_runbook" '(^|[[:space:]])git[[:space:]]+tag([[:spac
 assert_not_matches "$release_runbook" '(^|[[:space:]])git[[:space:]]+push[^[:cntrl:]]*(refs/tags/)?v0\.1\.2'
 assert_not_matches "$release_runbook" '(^|[[:space:]])git[[:space:]]+update-ref[^[:cntrl:]]*refs/tags/v0\.1\.2'
 assert_not_matches "$release_runbook" '(^|[[:space:]])gh[[:space:]]+release[[:space:]]+(create|delete|edit|upload)[^[:cntrl:]]*v0\.1\.2'
+
+verifier_dir=$(mktemp -d)
+trap 'rm -rf "$verifier_dir"' EXIT HUP INT TERM
+verifier_script="$verifier_dir/verify_tarball.py"
+awk '
+  /^# BEGIN PRE_R3_TARBALL_VERIFIER$/ { capture = 1; next }
+  /^# END PRE_R3_TARBALL_VERIFIER$/ { capture = 0; exit }
+  capture { print }
+' "$root/$release_runbook" > "$verifier_script"
+test -s "$verifier_script"
+NPM_CONFIG_CACHE="$verifier_dir/npm-cache" \
+  npm pack --silent --pack-destination "$verifier_dir" "$root" >/dev/null
+artifact="$verifier_dir/superpowers-manager-0.1.3.tgz"
+test -f "$artifact"
+python3 "$verifier_script" \
+  "$artifact" \
+  "$root/tests/expected_tarball_contents.txt"
+
+mutated_expected="$verifier_dir/mutated-expected.txt"
+grep -Fv 'scripts/update' \
+  "$root/tests/expected_tarball_contents.txt" > "$mutated_expected"
+if python3 "$verifier_script" "$artifact" "$mutated_expected" \
+  >"$verifier_dir/mutant.out" 2>&1; then
+  echo "tarball verifier accepted an incomplete expected-file list" >&2
+  exit 1
+fi
 
 manual_probe="tests/manual/codex-behavior-probe.sh"
 assert_contains "$manual_probe" 'marketplace_name="superpowers-manager-probe"'

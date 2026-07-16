@@ -212,12 +212,25 @@ expect_equal(fetch(upload, "with", "upload.with").fetch("path"), "${{ steps.pack
 
 publish_run = step_run(publish, "Publish exact tarball idempotently")
 [
-  'existing_integrity=$(npm view "${PACKAGE}@${VERSION}" dist.integrity 2>/dev/null || true)',
+  'if npm view "${PACKAGE}@${VERSION}" dist.integrity > "$lookup_file" 2>&1; then',
+  'test -n "$existing_integrity"',
   'test "$existing_integrity" = "$EXPECTED_INTEGRITY"',
   'immutable registry version has different integrity',
+  'lookup_status=$?',
+  '*E404*) ;;',
+  '*"${PACKAGE}@${VERSION}"*) ;;',
+  'npm lookup failed with status',
   'npm publish "$TARBALL" --access public --provenance',
 ].each do |needle|
   raise "publish step missing #{needle.inspect}" unless publish_run.include?(needle)
+end
+raise "publish lookup must not suppress npm failures" if publish_run.include?("|| true")
+e404_check = publish_run.index('*E404*) ;;')
+exact_spec_check = publish_run.index('*"${PACKAGE}@${VERSION}"*) ;;')
+publish_command = publish_run.index('npm publish "$TARBALL" --access public --provenance')
+unless e404_check && exact_spec_check && publish_command &&
+    e404_check < publish_command && exact_spec_check < publish_command
+  raise "npm publish must occur only after exact E404 and package/version checks"
 end
 publish_step = fetch(publish, "steps", "jobs.publish.steps").find { |step| step["name"] == "Publish exact tarball idempotently" }
 publish_env = fetch(publish_step, "env", "publish step env")
@@ -244,6 +257,8 @@ end
 poll = step_run(publish, "Wait for registry integrity")
 raise "registry polling must be bounded" unless poll.include?('while [ "$attempt" -le 30 ]') && poll.include?("sleep 10")
 raise "registry polling must verify integrity" unless poll.include?('test "$observed_integrity" = "$EXPECTED_INTEGRITY"')
+raise "registry polling must not suppress npm failures" if poll.include?("|| true")
+raise "registry polling must fail on non-E404 lookup errors" unless poll.include?("registry lookup failed with status")
 poll_step = fetch(publish, "steps", "jobs.publish.steps").find { |step| step["name"] == "Wait for registry integrity" }
 poll_env = fetch(poll_step, "env", "poll step env")
 expect_equal(fetch(poll_env, "VERSION", "poll VERSION"), "0.1.3", "poll VERSION")
@@ -271,13 +286,23 @@ release_run = step_run(github_release, "Create or verify GitHub release")
   "TAG=v0.1.3",
   "${{ needs.build.outputs.filename }}",
   "gh release create",
-  "gh release upload",
   '--title "Superpowers Manager 0.1.3"',
+  'test "$(jq -r \'.name\' "$release_json")" = "Superpowers Manager 0.1.3"',
+  'release_lookup_status=$?',
+  '*"HTTP 404"*) ;;',
+  "GitHub release lookup failed with status",
   "existing_digest",
   "expected_digest",
+  "existing release is missing the expected asset",
   "existing release asset has different digest",
 ].each do |needle|
   raise "GitHub release step missing #{needle.inspect}" unless release_run.include?(needle)
+end
+raise "existing GitHub releases must be verification-only" if release_run.include?("gh release upload")
+release_404_check = release_run.index('*"HTTP 404"*) ;;')
+release_create = release_run.index("gh release create")
+unless release_404_check && release_create && release_404_check < release_create
+  raise "GitHub release creation must occur only after confirmed HTTP 404"
 end
 if release_run.include?("--clobber")
   comparison = release_run.index('test "$existing_digest" = "$expected_digest"')
@@ -294,5 +319,42 @@ raise "wildcard release tags are forbidden" if serialized.match?(/tags:\s*\n\s*-
 raise "old package publish target is forbidden" if serialized.include?("superpowers-wrapper")
 raise "dist-tag mutations are forbidden" if serialized.match?(/npm\s+dist-tag|--tag\s+(?:latest|next|beta|rc)|prerelease/i)
 RUBY
+
+if [ "${SPM_SKIP_WORKFLOW_MUTANTS:-0}" != "1" ]; then
+  mutant_dir=$(mktemp -d)
+  trap 'rm -rf "$mutant_dir"' EXIT HUP INT TERM
+
+  assert_mutant_rejected() {
+    label=$1
+    old=$2
+    new=$3
+    mutant="$mutant_dir/$label.yml"
+    ruby - "$wf" "$mutant" "$old" "$new" <<'RUBY'
+source, destination, old, replacement = ARGV
+text = File.read(source)
+raise "mutation target absent: #{old.inspect}" unless text.include?(old)
+File.write(destination, text.sub(old, replacement))
+RUBY
+    if SPM_SKIP_WORKFLOW_MUTANTS=1 sh "$0" "$mutant" \
+      >"$mutant_dir/$label.out" 2>&1; then
+      echo "workflow contract accepted mutant: $label" >&2
+      cat "$mutant_dir/$label.out" >&2
+      exit 1
+    fi
+  }
+
+  assert_mutant_rejected \
+    npm-non-404 \
+    '*E404*) ;;' \
+    '*E404*|*E500*) ;;'
+  assert_mutant_rejected \
+    github-non-404 \
+    '*"HTTP 404"*) ;;' \
+    '*"HTTP 404"*|*"HTTP 500"*) ;;'
+  assert_mutant_rejected \
+    wrong-release-title \
+    'test "$(jq -r '\''.name'\'' "$release_json")" = "Superpowers Manager 0.1.3"' \
+    'test "$(jq -r '\''.name'\'' "$release_json")" = "Wrong title"'
+fi
 
 echo "test_release_workflow: OK"
