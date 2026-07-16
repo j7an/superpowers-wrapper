@@ -153,7 +153,7 @@ PY
 write_market "$market" "$commit_a"
 run_codex plugin marketplace add "$market"
 install_plugin_and_assert_active "$version_a" "$commit_a" "$commit_b"
-snapshot=$(spw_codex_identity_snapshot codex)
+snapshot=$(spw_codex_identity_snapshot run_codex)
 test "$(spw_snapshot_get "$snapshot" identity_state)" = "neither"
 assert_marketplace_root "$market"
 
