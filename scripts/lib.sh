@@ -3,6 +3,8 @@
 SPW_UPSTREAM_URL_DEFAULT="https://github.com/obra/superpowers"
 SPW_PLUGIN_ID="superpowers@superpowers-manager"
 SPW_MARKETPLACE_NAME="superpowers-manager"
+SPW_LEGACY_PLUGIN_ID="superpowers@superpowers-wrapper"
+SPW_LEGACY_MARKETPLACE_NAME="superpowers-wrapper"
 
 spw_die() {
   echo "error: $*" >&2
@@ -396,21 +398,21 @@ spw_manifest_short_sha_or_empty() {
 #   ~/.codex/plugins/cache/<marketplace>/superpowers/<version>/...
 # so the metadata/manifest live one directory below the plugin name, not
 # directly inside it (confirmed by the Task 1 behavior probe against the live
-# install). Match both the versioned layout and a flat layout (no intervening
-# version directory) so staging copies and any future flat cache still resolve.
+# install). Match both the versioned layout and a flat manager-cache layout (no
+# intervening version directory).
 spw_find_installed_metadata() {
   search_root="${SUPERPOWERS_INSTALLED_SEARCH_ROOT:-$HOME/.codex}"
   find "$search_root" \
-    \( -path "*/superpowers/.superpowers-upstream.json" \
-       -o -path "*/superpowers/*/.superpowers-upstream.json" \) \
+    \( -path "*/plugins/cache/$SPW_MARKETPLACE_NAME/superpowers/.superpowers-upstream.json" \
+       -o -path "*/plugins/cache/$SPW_MARKETPLACE_NAME/superpowers/*/.superpowers-upstream.json" \) \
     -type f 2>/dev/null | head -n 1
 }
 
 spw_find_installed_manifest() {
   search_root="${SUPERPOWERS_INSTALLED_SEARCH_ROOT:-$HOME/.codex}"
   find "$search_root" \
-    \( -path "*/superpowers/.codex-plugin/plugin.json" \
-       -o -path "*/superpowers/*/.codex-plugin/plugin.json" \) \
+    \( -path "*/plugins/cache/$SPW_MARKETPLACE_NAME/superpowers/.codex-plugin/plugin.json" \
+       -o -path "*/plugins/cache/$SPW_MARKETPLACE_NAME/superpowers/*/.codex-plugin/plugin.json" \) \
     -type f 2>/dev/null | head -n 1
 }
 
@@ -431,46 +433,90 @@ spw_json_array_has() {
 import json, sys
 raw, array_key, field, value = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
 try:
-    data = json.loads(raw)
-except (json.JSONDecodeError, RecursionError):
+    data = json.loads(
+        raw,
+        parse_constant=lambda constant: (_ for _ in ()).throw(ValueError(constant)),
+    )
+except (json.JSONDecodeError, RecursionError, ValueError):
     sys.exit(2)
 if not isinstance(data, dict):
     sys.exit(2)
 items = data.get(array_key)
 if not isinstance(items, list):
     sys.exit(2)
-found = any(isinstance(i, dict) and i.get(field) == value for i in items)
+for item in items:
+    if not isinstance(item, dict):
+        sys.exit(2)
+    item_value = item.get(field)
+    if not isinstance(item_value, str) or not item_value:
+        sys.exit(2)
+found = any(item[field] == value for item in items)
 print("present" if found else "absent")
 PY
 }
 
-# Return 0 if <plugin_id> is installed, 1 if genuinely not installed. Fail
-# closed: spw_die (exit) if the listing cannot be queried or parsed, so a
-# read/parse error is never mistaken for "absent".
-spw_plugin_is_installed() {
-  codex_bin="$1"
-  plugin_id="$2"
-  if ! out=$("$codex_bin" plugin list --json 2>/dev/null); then
-    spw_die "cannot list Codex plugins via '$codex_bin plugin list --json'"
-  fi
-  if ! result=$(spw_json_array_has "$out" "installed" "pluginId" "$plugin_id"); then
-    spw_die "cannot parse output of '$codex_bin plugin list --json'"
-  fi
-  [ "$result" = present ]
+spw_snapshot_get() {
+  snapshot="$1"
+  key="$2"
+  printf '%s\n' "$snapshot" | awk -F= -v key="$key" '$1 == key { print $2; found = 1 } END { if (!found) exit 1 }'
 }
 
-# Return 0 if <marketplace_name> is registered, 1 if genuinely not registered.
-# Fail closed exactly like spw_plugin_is_installed.
-spw_marketplace_is_registered() {
+spw_codex_identity_snapshot() {
   codex_bin="$1"
-  marketplace_name="$2"
-  if ! out=$("$codex_bin" plugin marketplace list --json 2>/dev/null); then
+  if ! plugin_listing=$("$codex_bin" plugin list --json 2>/dev/null); then
+    spw_die "cannot list Codex plugins via '$codex_bin plugin list --json'"
+  fi
+  if ! manager_plugin=$(spw_json_array_has "$plugin_listing" installed pluginId "$SPW_PLUGIN_ID"); then
+    spw_die "cannot parse output of '$codex_bin plugin list --json'"
+  fi
+  if ! legacy_plugin=$(spw_json_array_has "$plugin_listing" installed pluginId "$SPW_LEGACY_PLUGIN_ID"); then
+    spw_die "cannot parse output of '$codex_bin plugin list --json'"
+  fi
+
+  if ! marketplace_listing=$("$codex_bin" plugin marketplace list --json 2>/dev/null); then
     spw_die "cannot list Codex marketplaces via '$codex_bin plugin marketplace list --json'"
   fi
-  if ! result=$(spw_json_array_has "$out" "marketplaces" "name" "$marketplace_name"); then
+  if ! manager_marketplace=$(spw_json_array_has "$marketplace_listing" marketplaces name "$SPW_MARKETPLACE_NAME"); then
     spw_die "cannot parse output of '$codex_bin plugin marketplace list --json'"
   fi
-  [ "$result" = present ]
+  if ! legacy_marketplace=$(spw_json_array_has "$marketplace_listing" marketplaces name "$SPW_LEGACY_MARKETPLACE_NAME"); then
+    spw_die "cannot parse output of '$codex_bin plugin marketplace list --json'"
+  fi
+
+  manager=false
+  legacy=false
+  if [ "$manager_plugin" = present ] || [ "$manager_marketplace" = present ]; then
+    manager=true
+  fi
+  if [ "$legacy_plugin" = present ] || [ "$legacy_marketplace" = present ]; then
+    legacy=true
+  fi
+  case "$manager:$legacy" in
+    true:true) identity_state=both ;;
+    true:false) identity_state=manager ;;
+    false:true) identity_state=legacy ;;
+    false:false) identity_state=neither ;;
+  esac
+
+  printf 'manager_plugin=%s\n' "$([ "$manager_plugin" = present ] && printf true || printf false)"
+  printf 'manager_marketplace=%s\n' "$([ "$manager_marketplace" = present ] && printf true || printf false)"
+  printf 'legacy_plugin=%s\n' "$([ "$legacy_plugin" = present ] && printf true || printf false)"
+  printf 'legacy_marketplace=%s\n' "$([ "$legacy_marketplace" = present ] && printf true || printf false)"
+  printf 'identity_state=%s\n' "$identity_state"
+}
+
+spw_require_no_legacy_state() {
+  case "$1" in
+    neither|manager) return 0 ;;
+    legacy|both)
+      printf '%s\n' \
+        'Legacy superpowers-wrapper Codex state is installed.' \
+        'Run: npx superpowers-wrapper@0.1.1 uninstall' \
+        'Then run: npx superpowers-manager@0.1.2 install' >&2
+      return 1
+      ;;
+    *) spw_die "unknown Codex identity state: $1" ;;
+  esac
 }
 
 # Print the registered root of <marketplace_name> from a marketplace-list JSON

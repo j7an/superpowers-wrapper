@@ -32,9 +32,9 @@ test "$found_metadata" = "$cache/.superpowers-upstream.json"
 found_manifest=$(SUPERPOWERS_INSTALLED_SEARCH_ROOT="$tmpdir/.codex" spw_find_installed_manifest)
 test "$found_manifest" = "$cache/.codex-plugin/plugin.json"
 
-# Backward-compatible: a layout with no intervening version directory must
-# still resolve (covers staging copies and any future flat cache layout).
-flat="$tmpdir/flat/superpowers"
+# Backward-compatible: a manager cache layout with no intervening version
+# directory must still resolve.
+flat="$tmpdir/flat/plugins/cache/superpowers-manager/superpowers"
 mkdir -p "$flat/.codex-plugin"
 cat > "$flat/.superpowers-upstream.json" <<'JSON'
 {

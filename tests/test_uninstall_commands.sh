@@ -32,12 +32,36 @@ if [ "$1" = plugin ] && [ "$2" = remove ]; then
   elif [ -f "$state/remove_plugin_missing_installed" ]; then
     printf '%s\n' '{"available":[]}' > "$state/plugin_list.json"
   else
-    printf '%s\n' '{"installed":[],"available":[]}' > "$state/plugin_list.json"
+    python3 - "$state/plugin_list.json" <<'PY'
+import json, sys
+path = sys.argv[1]
+with open(path, encoding="utf-8") as f:
+    data = json.load(f)
+data["installed"] = [
+    item for item in data["installed"]
+    if item.get("pluginId") != "superpowers@superpowers-manager"
+]
+with open(path, "w", encoding="utf-8") as f:
+    json.dump(data, f)
+PY
   fi
   exit 0
 fi
 if [ "$1" = plugin ] && [ "$2" = marketplace ] && [ "$3" = remove ]; then
-  [ -f "$state/remove_noop" ] || printf '%s\n' '{"marketplaces":[{"name":"openai-curated","root":"/x"}]}' > "$state/marketplace_list.json"
+  if [ ! -f "$state/remove_noop" ]; then
+    python3 - "$state/marketplace_list.json" <<'PY'
+import json, sys
+path = sys.argv[1]
+with open(path, encoding="utf-8") as f:
+    data = json.load(f)
+data["marketplaces"] = [
+    item for item in data["marketplaces"]
+    if item.get("name") != "superpowers-manager"
+]
+with open(path, "w", encoding="utf-8") as f:
+    json.dump(data, f)
+PY
+  fi
   exit 0
 fi
 exit 0
@@ -48,6 +72,10 @@ plugin_present='{"installed":[{"pluginId":"superpowers@superpowers-manager","nam
 plugin_absent='{"installed":[],"available":[]}'
 marketplace_present='{"marketplaces":[{"name":"openai-curated","root":"/x"},{"name":"superpowers-manager","root":"/y"}]}'
 marketplace_absent='{"marketplaces":[{"name":"openai-curated","root":"/x"}]}'
+legacy_plugin='{"installed":[{"pluginId":"superpowers@superpowers-wrapper"}],"available":[]}'
+both_plugins='{"installed":[{"pluginId":"superpowers@superpowers-manager"},{"pluginId":"superpowers@superpowers-wrapper"}],"available":[]}'
+legacy_marketplace='{"marketplaces":[{"name":"superpowers-wrapper","root":"/legacy"}]}'
+both_marketplaces='{"marketplaces":[{"name":"superpowers-manager","root":"/manager"},{"name":"superpowers-wrapper","root":"/legacy"}]}'
 
 reset() {
   rm -f "$state/plugin_list.rc" "$state/marketplace_list.rc" "$state/remove_noop" "$state/remove_plugin_missing_installed"
@@ -200,5 +228,33 @@ if grep -Fq "uninstall complete" "$state/out"; then
   cat "$state/out" >&2
   exit 1
 fi
+
+# --- Scenario 10: legacy-only -> success, no removal, explicit cleanup note ---
+reset
+printf '%s\n' "$legacy_plugin" > "$state/plugin_list.json"
+printf '%s\n' "$legacy_marketplace" > "$state/marketplace_list.json"
+run_uninstall >"$state/out"
+assert_no_removes
+assert_output_contains "Legacy superpowers-wrapper Codex state remains installed."
+assert_output_contains "Run: npx superpowers-wrapper@0.1.1 uninstall"
+
+# --- Scenario 11: both -> remove only manager identities and leave legacy ---
+reset
+printf '%s\n' "$both_plugins" > "$state/plugin_list.json"
+printf '%s\n' "$both_marketplaces" > "$state/marketplace_list.json"
+run_uninstall >"$state/out"
+grep -Fq "plugin remove superpowers@superpowers-manager" "$log"
+grep -Fq "plugin marketplace remove superpowers-manager" "$log"
+rm_line=$(grep -Fn "plugin remove superpowers@superpowers-manager" "$log" | head -n1 | cut -d: -f1)
+mp_line=$(grep -Fn "plugin marketplace remove superpowers-manager" "$log" | head -n1 | cut -d: -f1)
+[ "$rm_line" -lt "$mp_line" ] || { echo "manager plugin remove must precede manager marketplace remove" >&2; exit 1; }
+if grep -Fq "remove superpowers@superpowers-wrapper" "$log" || \
+   grep -Fq "marketplace remove superpowers-wrapper" "$log"; then
+  echo "uninstall must never remove legacy identities" >&2
+  cat "$log" >&2
+  exit 1
+fi
+assert_output_contains "Legacy superpowers-wrapper Codex state remains installed."
+assert_output_contains "Run: npx superpowers-wrapper@0.1.1 uninstall"
 
 echo "test_uninstall_commands: OK"
