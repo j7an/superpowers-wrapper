@@ -16,7 +16,28 @@ jobs:
     uses: j7an/shared-workflows/.github/workflows/publish-npm.yml@dc9105acf09a4ad43bad2e4a86f4c65f553fe3c0 # v4.2.2
     with:
       tag: ${{ github.ref_name }}
-      package-name: superpowers-wrapper
+      package-name: superpowers-manager
       test-command: sh tests/container.sh
       pack-contents-script: tests/assert_pack_contents.sh
-      verify-command: 'test "$(npx --yes "${PACKAGE}@${VERSION}" --version)" = "$VERSION"'
+      verify-command: |
+        attempt=1
+        for delay in 0 30 60 90 120 150; do
+          if [ "$delay" -gt 0 ]; then
+            echo "npx verification attempt ${attempt}/6: sleeping ${delay}s"
+            sleep "$delay"
+          else
+            echo "npx verification attempt ${attempt}/6: checking before sleep"
+          fi
+          cache="${RUNNER_TEMP:-/tmp}/superpowers-manager-npx-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-1}-${attempt}"
+          if actual=$(npm_config_cache="$cache" npx --yes "${PACKAGE}@${VERSION}" --version); then
+            if [ "$actual" = "$VERSION" ]; then
+              echo "npx resolved ${PACKAGE}@${VERSION}"
+              exit 0
+            fi
+            echo "::error::npx resolved ${PACKAGE}@${VERSION} with unexpected version ${actual}" >&2
+            exit 1
+          fi
+          attempt=$((attempt + 1))
+        done
+        echo "::error::npx verification failed after 6 attempts" >&2
+        exit 1

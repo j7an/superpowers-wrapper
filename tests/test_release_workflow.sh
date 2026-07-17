@@ -31,7 +31,7 @@ def expect_equal(actual, expected, path)
 end
 
 def assert_no_forbidden(value, path = "workflow")
-  forbidden = /--provenance|npm_config_provenance|npm(?:[_ -]?token)|node_auth_token/i
+  forbidden = /--provenance|npm_config_provenance|npm(?:[_ -]?token)|node_auth_token|npm-bootstrap|superpowers-wrapper|npm publish|--tag next/i
 
   case value
   when Hash
@@ -69,12 +69,35 @@ expect_equal(fetch(permissions, "contents", "jobs.publish.permissions.contents")
 expect_equal(fetch(permissions, "id-token", "jobs.publish.permissions.id-token"), "write", "jobs.publish.permissions.id-token")
 
 with = expect_hash(fetch(publish, "with", "jobs.publish.with"), "jobs.publish.with")
+expected_verify_command = <<~'SH'
+  attempt=1
+  for delay in 0 30 60 90 120 150; do
+    if [ "$delay" -gt 0 ]; then
+      echo "npx verification attempt ${attempt}/6: sleeping ${delay}s"
+      sleep "$delay"
+    else
+      echo "npx verification attempt ${attempt}/6: checking before sleep"
+    fi
+    cache="${RUNNER_TEMP:-/tmp}/superpowers-manager-npx-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-1}-${attempt}"
+    if actual=$(npm_config_cache="$cache" npx --yes "${PACKAGE}@${VERSION}" --version); then
+      if [ "$actual" = "$VERSION" ]; then
+        echo "npx resolved ${PACKAGE}@${VERSION}"
+        exit 0
+      fi
+      echo "::error::npx resolved ${PACKAGE}@${VERSION} with unexpected version ${actual}" >&2
+      exit 1
+    fi
+    attempt=$((attempt + 1))
+  done
+  echo "::error::npx verification failed after 6 attempts" >&2
+  exit 1
+SH
 expected_with = {
   "tag" => "${{ github.ref_name }}",
-  "package-name" => "superpowers-wrapper",
+  "package-name" => "superpowers-manager",
   "test-command" => "sh tests/container.sh",
   "pack-contents-script" => "tests/assert_pack_contents.sh",
-  "verify-command" => "test \"$(npx --yes \"${PACKAGE}@${VERSION}\" --version)\" = \"$VERSION\"",
+  "verify-command" => expected_verify_command,
 }
 expected_with.each do |key, expected|
   expect_equal(fetch(with, key, "jobs.publish.with.#{key}"), expected, "jobs.publish.with.#{key}")
