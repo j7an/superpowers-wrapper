@@ -24,8 +24,8 @@ Codex below describe the product integration, not a required agent harness.
 - Enforce the manager-owned contract: plugin name `superpowers`, a ref-aware
   manager version, `skills: ./skills/`, upstream provenance, and no manifest
   `hooks` field or physical `hooks/` directory.
-- The hook-free policy is deliberate. Changing it requires a separate design
-  and current compatibility evidence.
+- The hook-free policy is Codex-specific and deliberate. Changing it requires
+  a separate design and current compatibility evidence.
 - `scripts/prepare` must build in an invocation-specific staging tree, validate
   before replacement, clean only its own staging tree on every normal or
   trapped exit, and preserve the previous generated tree on failure.

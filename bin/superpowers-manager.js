@@ -28,7 +28,7 @@ import { spawnSync } from 'node:child_process';
  */
 
 const SUBCOMMANDS = ['prepare', 'probe', 'install', 'update', 'uninstall'];
-const CODEX_SUBCOMMANDS = ['install', 'update', 'uninstall'];
+const CODEX_SUBCOMMANDS = ['probe', 'install', 'update', 'uninstall'];
 // Mirrors upstream Superpowers' hooks/run-hook.cmd discovery order.
 const GIT_BASH_CANDIDATES = [
   'C:\\Program Files\\Git\\bin\\bash.exe',

@@ -45,7 +45,17 @@ if [ "$1" = plugin ] && [ "$2" = remove ]; then
   elif [ -f "$state/remove_plugin_missing_installed" ]; then
     printf '%s\n' '{"available":[]}' > "$state/plugin_list.json"
   else
-    printf '%s\n' '{"installed":[],"available":[]}' > "$state/plugin_list.json"
+    python3 - "$state/plugin_list.json" "$3" <<'PY'
+import json, sys
+path, plugin_id = sys.argv[1:]
+with open(path, encoding="utf-8") as handle:
+    data = json.load(handle)
+data["installed"] = [
+    item for item in data["installed"] if item.get("pluginId") != plugin_id
+]
+with open(path, "w", encoding="utf-8") as handle:
+    json.dump(data, handle)
+PY
   fi
   exit 0
 fi
@@ -54,7 +64,19 @@ if [ "$1" = plugin ] && [ "$2" = marketplace ] && [ "$3" = remove ]; then
     printf '%s\n' 'marketplace remove exploded' >&2
     exit 1
   fi
-  [ -f "$state/remove_noop" ] || printf '%s\n' '{"marketplaces":[{"name":"openai-curated","root":"/x"}]}' > "$state/marketplace_list.json"
+  if [ ! -f "$state/remove_noop" ]; then
+    python3 - "$state/marketplace_list.json" "$4" <<'PY'
+import json, sys
+path, marketplace_name = sys.argv[1:]
+with open(path, encoding="utf-8") as handle:
+    data = json.load(handle)
+data["marketplaces"] = [
+    item for item in data["marketplaces"] if item.get("name") != marketplace_name
+]
+with open(path, "w", encoding="utf-8") as handle:
+    json.dump(data, handle)
+PY
+  fi
   exit 0
 fi
 exit 0
@@ -73,6 +95,10 @@ plugin_present='{"installed":[{"pluginId":"superpowers@superpowers-manager","nam
 plugin_absent='{"installed":[],"available":[]}'
 marketplace_present='{"marketplaces":[{"name":"openai-curated","root":"/x"},{"name":"superpowers-manager","root":"/y"}]}'
 marketplace_absent='{"marketplaces":[{"name":"openai-curated","root":"/x"}]}'
+legacy_plugin_present='{"installed":[{"pluginId":"superpowers@superpowers-wrapper","name":"superpowers","marketplaceName":"superpowers-wrapper"}],"available":[]}'
+legacy_marketplace_present='{"marketplaces":[{"name":"superpowers-wrapper","root":"/legacy"}]}'
+both_plugins_present='{"installed":[{"pluginId":"superpowers@superpowers-manager","name":"superpowers","marketplaceName":"superpowers-manager"},{"pluginId":"superpowers@superpowers-wrapper","name":"superpowers","marketplaceName":"superpowers-wrapper"}],"available":[]}'
+both_marketplaces_present='{"marketplaces":[{"name":"superpowers-manager","root":"/manager"},{"name":"superpowers-wrapper","root":"/legacy"}]}'
 
 reset() {
   rm -f "$state/plugin_list.rc" "$state/marketplace_list.rc" "$state/remove_noop" \
@@ -162,6 +188,33 @@ if grep -Fq "error: invalid adapter response:" "$state/out"; then
   cat "$state/out" >&2
   exit 1
 fi
+
+# --- Scenario 0c: legacy-only state is never mutated and leaves guidance ---
+reset
+printf '%s\n' "$legacy_plugin_present" > "$state/plugin_list.json"
+printf '%s\n' "$legacy_marketplace_present" > "$state/marketplace_list.json"
+out=$(run_uninstall)
+assert_no_removes
+grep -Fxq "uninstall --plugin-present false --marketplace-present false" "$adapter_log"
+printf '%s\n' "$out" | grep -Fxq 'Legacy superpowers-wrapper Codex state remains installed.'
+printf '%s\n' "$out" | grep -Fxq 'Run: npx superpowers-wrapper@0.1.1 uninstall'
+
+# --- Scenario 0d: mixed state removes manager resources only and reports the
+# untouched legacy residue ---
+reset
+printf '%s\n' "$both_plugins_present" > "$state/plugin_list.json"
+printf '%s\n' "$both_marketplaces_present" > "$state/marketplace_list.json"
+out=$(run_uninstall)
+grep -Fq 'plugin remove superpowers@superpowers-manager' "$log"
+grep -Fq 'plugin marketplace remove superpowers-manager' "$log"
+if grep -Fq 'superpowers@superpowers-wrapper' "$log" ||
+   grep -Fq 'plugin marketplace remove superpowers-wrapper' "$log"; then
+  echo "uninstall must not mutate legacy resources" >&2
+  cat "$log" >&2
+  exit 1
+fi
+printf '%s\n' "$out" | grep -Fxq 'Legacy superpowers-wrapper Codex state remains installed.'
+printf '%s\n' "$out" | grep -Fxq 'Run: npx superpowers-wrapper@0.1.1 uninstall'
 
 # --- Scenario 1: both present -> both removed, plugin before marketplace,
 #     openai-curated never named ---

@@ -188,23 +188,75 @@ class AdapterProtocolValidatorTests(unittest.TestCase):
                     },
                 )
 
-    def test_inspect_ownership_requires_exactly_two_boolean_resources(self) -> None:
-        payload = envelope(
-            "inspect",
-            {
-                "view": "ownership",
-                "resources": {"plugin": True, "marketplace": False},
-            },
+    def test_inspect_ownership_accepts_all_consistent_identity_states(self) -> None:
+        cases = (
+            (False, False, False, False, "neither"),
+            (True, False, False, False, "manager"),
+            (False, False, False, True, "legacy"),
+            (False, True, True, False, "both"),
         )
-        self.assert_valid(
-            payload,
-            operation="inspect",
-            inspect_view="ownership",
-            expected_result={
-                "view": "ownership",
-                "resources": {"plugin": True, "marketplace": False},
-            },
+        for manager_plugin, manager_marketplace, legacy_plugin, legacy_marketplace, state in cases:
+            with self.subTest(state=state):
+                result = {
+                    "view": "ownership",
+                    "resources": {
+                        "plugin": manager_plugin,
+                        "marketplace": manager_marketplace,
+                    },
+                    "legacy_resources": {
+                        "plugin": legacy_plugin,
+                        "marketplace": legacy_marketplace,
+                    },
+                    "identity_state": state,
+                }
+                self.assert_valid(
+                    envelope("inspect", result),
+                    operation="inspect",
+                    inspect_view="ownership",
+                    expected_result=result,
+                )
+
+    def test_inspect_ownership_rejects_old_malformed_and_inconsistent_results(self) -> None:
+        valid = {
+            "view": "ownership",
+            "resources": {"plugin": True, "marketplace": False},
+            "legacy_resources": {"plugin": False, "marketplace": False},
+            "identity_state": "manager",
+        }
+        invalid_cases = (
+            (
+                {"view": "ownership", "resources": valid["resources"]},
+                "inspect result keys must be",
+            ),
+            (
+                {**valid, "resources": {"plugin": True}},
+                "resources keys must be",
+            ),
+            (
+                {**valid, "legacy_resources": {"plugin": False}},
+                "legacy_resources keys must be",
+            ),
+            (
+                {**valid, "legacy_resources": {"plugin": False, "marketplace": "no"}},
+                "legacy_resources values must be Boolean",
+            ),
+            (
+                {**valid, "identity_state": "unknown"},
+                "identity_state must be manager",
+            ),
+            (
+                {**valid, "identity_state": "legacy"},
+                "identity_state must be manager",
+            ),
         )
+        for result, fragment in invalid_cases:
+            with self.subTest(result=result):
+                self.assert_invalid(
+                    envelope("inspect", result),
+                    operation="inspect",
+                    inspect_view="ownership",
+                    fragment=fragment,
+                )
 
     def test_install_accepts_empty_one_and_both_verification_hints(self) -> None:
         for hints in (
@@ -248,7 +300,7 @@ class AdapterProtocolValidatorTests(unittest.TestCase):
         payload["error"] = {
             "code": "controlled-failure",
             "message": "controlled failure",
-            "hints": ["retry later", "inspect wrapper state"],
+            "hints": ["retry later", "inspect manager state"],
         }
         result = validate(payload, "install", adapter_exit=1)
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
@@ -258,7 +310,7 @@ class AdapterProtocolValidatorTests(unittest.TestCase):
             "pre-error-warning\n"
             "error: controlled failure\n"
             "hint: retry later\n"
-            "hint: inspect wrapper state\n",
+            "hint: inspect manager state\n",
         )
         self.assertIsNone(result.validated_result)
         self.assertNotIn("Traceback", result.stderr)
@@ -488,7 +540,7 @@ class AdapterProtocolValidatorTests(unittest.TestCase):
                 {"result": {"view": "fingerprint", "fingerprint": None}},
                 "inspect",
                 "ownership",
-                "inspect result keys must be ['resources', 'view'], got ['fingerprint', 'view']",
+                "inspect result keys must be ['identity_state', 'legacy_resources', 'resources', 'view'], got ['fingerprint', 'view']",
             ),
             (
                 {"result": {"view": "other", "fingerprint": None}},
@@ -525,15 +577,25 @@ class AdapterProtocolValidatorTests(unittest.TestCase):
             ),
             (
                 "inspect",
-                {"view": "ownership", "resources": {"plugin": True}},
+                {
+                    "view": "ownership",
+                    "resources": {"plugin": True},
+                    "legacy_resources": {"plugin": False, "marketplace": False},
+                    "identity_state": "manager",
+                },
                 "ownership",
                 "resources keys must be ['marketplace', 'plugin'], got ['plugin']",
             ),
             (
                 "inspect",
-                {"view": "ownership", "resources": {"plugin": True, "marketplace": "no"}},
+                {
+                    "view": "ownership",
+                    "resources": {"plugin": True, "marketplace": "no"},
+                    "legacy_resources": {"plugin": False, "marketplace": False},
+                    "identity_state": "manager",
+                },
                 "ownership",
-                "owned resources must be Boolean",
+                "resources values must be Boolean",
             ),
             (
                 "install",

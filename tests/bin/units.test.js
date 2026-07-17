@@ -45,11 +45,11 @@ assert.strictEqual(bin.isMain(entryPath, process.argv[1]), true);
 assert.strictEqual(bin.isMain(entryPath, undefined), false);
 assert.throws(() => bin.isMain(entryPath, path.join(import.meta.dirname, 'missing-entry.js')));
 
-// --- preflight: codex required only for install/update/uninstall ---
+// --- preflight: codex required for every command that inspects or mutates Codex ---
 const emptyEnv = { PATH: '/nonexistent-dir-for-test' };
 const probePf = bin.preflight('probe', emptyEnv, 'linux');
 assert.strictEqual(probePf.ok, false);
-assert.ok(!probePf.errors.join('\n').includes('codex'), 'probe must not require codex');
+assert.ok(probePf.errors.join('\n').includes('codex'), 'probe must require codex');
 const installPf = bin.preflight('install', emptyEnv, 'linux');
 assert.strictEqual(installPf.ok, false);
 assert.ok(installPf.errors.join('\n').includes('codex'), 'install must require codex');

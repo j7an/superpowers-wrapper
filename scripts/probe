@@ -20,7 +20,8 @@ tmp_parent="${TMPDIR:-/tmp}"
 if ! probe_workspace=$(mktemp -d "$tmp_parent/superpowers-manager.probe.XXXXXX"); then
   spw_die "cannot create probe workspace under $tmp_parent"
 fi
-inspect_result="$probe_workspace/inspect.json"
+fingerprint_result="$probe_workspace/fingerprint.json"
+ownership_result="$probe_workspace/ownership.json"
 cleanup() {
   status=$?
   trap - 0 HUP INT TERM
@@ -34,8 +35,10 @@ trap 'exit 143' TERM
 
 TMPDIR="$probe_workspace"
 export TMPDIR
-spw_inspect_fingerprint "$inspect_result"
-installed_commit=$(spw_adapter_result_get "$inspect_result" "fingerprint")
+spw_inspect_fingerprint "$fingerprint_result"
+installed_commit=$(spw_adapter_result_get "$fingerprint_result" "fingerprint")
+spw_inspect_ownership "$ownership_result"
+identity_state=$(spw_adapter_result_get "$ownership_result" "identity_state")
 
 status=$(spw_status_for_commits "$desired_commit" "$generated_commit" "$installed_commit")
 
@@ -45,6 +48,7 @@ if [ "${1:-}" = "--porcelain" ]; then
   printf 'desired_commit=%s\n' "$desired_commit"
   printf 'generated_commit=%s\n' "$generated_commit"
   printf 'installed_commit=%s\n' "$installed_commit"
+  printf 'identity_state=%s\n' "$identity_state"
   printf 'status=%s\n' "$status"
 else
   printf 'requested ref: %s\n' "$requested_ref"
@@ -52,5 +56,6 @@ else
   printf 'desired commit: %s\n' "$desired_commit"
   printf 'generated plugin commit: %s\n' "${generated_commit:-not present}"
   printf 'installed manager commit or fingerprint: %s\n' "${installed_commit:-not detected}"
+  printf 'Codex identity state: %s\n' "$identity_state"
   printf 'status: %s\n' "$status"
 fi

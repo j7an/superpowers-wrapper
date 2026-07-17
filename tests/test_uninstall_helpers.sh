@@ -4,6 +4,8 @@ set -eu
 root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 . "$root/scripts/core/common.sh"
 . "$root/scripts/adapters/codex/lib.sh"
+. "$root/scripts/core/common.sh"
+. "$root/scripts/core/lifecycle.sh"
 
 if grep -Eq '^spw_(plugin_is_installed|marketplace_is_registered)\(\)' \
   "$root/scripts/adapters/codex/lib.sh"; then
@@ -52,5 +54,31 @@ test "$(spw_json_array_has '{"installed":[]}' installed pluginId "x")" = absent
 
 # malformed JSON -> non-zero exit (fail closed), no "present"/"absent" output
 assert_fails 'not json {{{' installed pluginId "x"
+
+for state in neither manager; do
+  output=$(spw_require_no_legacy_state "$state" 2>&1)
+  [ -z "$output" ]
+done
+
+for state in legacy both; do
+  if output=$(spw_require_no_legacy_state "$state" 2>&1); then
+    echo "legacy policy must reject $state" >&2
+    exit 1
+  fi
+  printf '%s\n' "$output" | grep -Fxq 'Legacy superpowers-wrapper Codex state is installed.'
+  printf '%s\n' "$output" | grep -Fxq 'Run: npx superpowers-wrapper@0.1.1 uninstall'
+  printf '%s\n' "$output" | grep -Fxq 'Then run: npx superpowers-manager install'
+done
+
+for state in neither manager; do
+  output=$(spw_report_legacy_state "$state")
+  [ -z "$output" ]
+done
+
+for state in legacy both; do
+  output=$(spw_report_legacy_state "$state")
+  printf '%s\n' "$output" | grep -Fxq 'Legacy superpowers-wrapper Codex state remains installed.'
+  printf '%s\n' "$output" | grep -Fxq 'Run: npx superpowers-wrapper@0.1.1 uninstall'
+done
 
 echo "test_uninstall_helpers: OK"

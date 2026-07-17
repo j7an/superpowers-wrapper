@@ -62,6 +62,11 @@ cat > "$fake_codex" <<'EOF'
 state=$(CDPATH= cd -- "$(dirname "$0")" && pwd)/state
 printf '%s\n' "$*" >> "$state/codex.log"
 
+if [ "$1" = plugin ] && [ "$2" = list ]; then
+  rc=0; [ -f "$state/plugin_list.rc" ] && rc=$(cat "$state/plugin_list.rc")
+  cat "$state/plugin_list.json"
+  exit "$rc"
+fi
 if [ "$1" = plugin ] && [ "$2" = marketplace ] && [ "$3" = list ]; then
   rc=0; [ -f "$state/marketplace_list.rc" ] && rc=$(cat "$state/marketplace_list.rc")
   cat "$state/marketplace_list.json"
@@ -145,8 +150,10 @@ marketplace_absent='{"marketplaces":[{"name":"openai-curated","root":"/x"}]}'
 reset() {
   rm -f "$state/marketplace_list.rc" "$state/marketplace_add_fail" \
         "$state/plugin_add_fail" "$state/plugin_add_noop" "$state/plugin_add_stale" \
-        "$state/fingerprint_inspect_fail" "$state/fingerprint_inspect_malformed"
+        "$state/fingerprint_inspect_fail" "$state/fingerprint_inspect_malformed" \
+        "$state/plugin_list.rc"
   rm -rf "$state/codex-home"
+  printf '%s\n' '{"installed":[],"available":[]}' > "$state/plugin_list.json"
   : > "$log"
   : > "$state/adapter.log"
 }
@@ -205,6 +212,41 @@ adapter_line_of() {
   grep -Fn "$1" "$state/adapter.log" | head -n1 | cut -d: -f1
 }
 
+assert_no_codex_mutation() {
+  if grep -Eq '^plugin (add|remove) |^plugin marketplace (add|remove) ' "$log"; then
+    echo "expected no Codex mutation; log was:" >&2
+    cat "$log" >&2
+    exit 1
+  fi
+}
+
+# Legacy and mixed identity state stop before prepare or adapter mutation.
+for legacy_state in legacy both; do
+  reset
+  case "$legacy_state" in
+    legacy)
+      printf '%s\n' '{"installed":[{"pluginId":"superpowers@superpowers-wrapper"}],"available":[]}' > "$state/plugin_list.json"
+      ;;
+    both)
+      printf '%s\n' '{"installed":[{"pluginId":"superpowers@superpowers-manager"},{"pluginId":"superpowers@superpowers-wrapper"}],"available":[]}' > "$state/plugin_list.json"
+      ;;
+  esac
+  printf '%s\n' '{"marketplaces":[{"name":"superpowers-wrapper","root":"/legacy"}]}' > "$state/marketplace_list.json"
+  if run_install >"$state/out" 2>&1; then
+    echo "install must reject $legacy_state identity state" >&2
+    exit 1
+  fi
+  grep -Fxq 'Legacy superpowers-wrapper Codex state is installed.' "$state/out"
+  grep -Fxq 'Run: npx superpowers-wrapper@0.1.1 uninstall' "$state/out"
+  grep -Fxq 'Then run: npx superpowers-manager install' "$state/out"
+  if grep -Eq '^build |^install ' "$state/adapter.log"; then
+    echo "legacy state must stop before build or install adapter mutation" >&2
+    cat "$state/adapter.log" >&2
+    exit 1
+  fi
+  assert_no_codex_mutation
+done
+
 # ---------------------------------------------------------------------------
 # Scenario V1: built-in validation failure leaves Codex untouched.
 # ---------------------------------------------------------------------------
@@ -226,11 +268,7 @@ if run_install >"$state/out" 2>&1; then
   exit 1
 fi
 grep -Fq "field \`name\` must equal \`superpowers\`" "$state/out"
-[ ! -s "$log" ] || {
-  echo "built-in validation failure must leave Codex untouched" >&2
-  cat "$log" >&2
-  exit 1
-}
+assert_no_codex_mutation
 cp "$root/plugins/superpowers/.codex-plugin/plugin.template.json" \
   "$pkg/plugins/superpowers/.codex-plugin/plugin.template.json"
 
@@ -243,11 +281,7 @@ if run_install SUPERPOWERS_VALIDATOR="$failing_validator" >"$state/out" 2>&1; th
   exit 1
 fi
 grep -Fq "additional plugin validation failed" "$state/out"
-[ ! -s "$log" ] || {
-  echo "additional validation failure must leave Codex untouched" >&2
-  cat "$log" >&2
-  exit 1
-}
+assert_no_codex_mutation
 
 # ---------------------------------------------------------------------------
 # Scenario 1: fresh install — prepare runs, marketplace listed before added,
@@ -268,14 +302,14 @@ if grep -Fq "marketplace remove" "$log"; then
   echo "fresh install must not remove any marketplace" >&2; exit 1
 fi
 if grep -Fq "plugin remove superpowers@superpowers-manager" "$log"; then
-  echo "add-only fresh install must not remove the wrapper plugin" >&2; exit 1
+  echo "add-only fresh install must not remove the manager plugin" >&2; exit 1
 fi
 if grep -Fq "openai-curated" "$log"; then
   echo "install must never name openai-curated" >&2; exit 1
 fi
 
 # ---------------------------------------------------------------------------
-# Scenario 1b: a generated/current wrapper still runs adapter install so the
+# Scenario 1b: a generated/current manager still runs adapter install so the
 # package root is actively reconciled instead of being skipped as "already up to
 # date".
 # ---------------------------------------------------------------------------
@@ -326,7 +360,7 @@ if grep -Fq "marketplace add" "$log" || grep -Fq "marketplace remove" "$log"; th
 fi
 grep -Fq "plugin add superpowers@superpowers-manager" "$log"
 if grep -Fq "plugin remove superpowers@superpowers-manager" "$log"; then
-  echo "add-only same-root install must not remove the wrapper plugin" >&2; exit 1
+  echo "add-only same-root install must not remove the manager plugin" >&2; exit 1
 fi
 
 # ---------------------------------------------------------------------------
@@ -341,10 +375,10 @@ pa_line=$(line_of "plugin add superpowers@superpowers-manager")
 { [ "$rm_line" -lt "$add_line" ] && [ "$add_line" -lt "$pa_line" ]; } || {
   echo "order must be: marketplace remove, marketplace add, plugin add" >&2; cat "$log" >&2; exit 1; }
 if grep -Fq "marketplace remove openai-curated" "$log"; then
-  echo "must only ever remove the wrapper marketplace" >&2; exit 1
+  echo "must only ever remove the manager marketplace" >&2; exit 1
 fi
 if grep -Fq "plugin remove superpowers@superpowers-manager" "$log"; then
-  echo "add-only drift reconciliation must not remove the wrapper plugin" >&2; exit 1
+  echo "add-only drift reconciliation must not remove the manager plugin" >&2; exit 1
 fi
 
 # ---------------------------------------------------------------------------
@@ -361,10 +395,26 @@ if grep -Fq "install --package-root" "$state/adapter.log"; then
   exit 1
 fi
 [ ! -s "$log" ] || {
-  echo "current update must not mutate Codex state" >&2
-  cat "$log" >&2
-  exit 1
+  assert_no_codex_mutation
 }
+
+# Scenario 3c: update rejects mixed legacy state even when the manager
+# fingerprint is already current.
+reset
+seed_installed_current
+printf '%s\n' '{"installed":[{"pluginId":"superpowers@superpowers-manager"},{"pluginId":"superpowers@superpowers-wrapper"}],"available":[]}' > "$state/plugin_list.json"
+printf '%s\n' '{"marketplaces":[{"name":"superpowers-wrapper","root":"/legacy"}]}' > "$state/marketplace_list.json"
+if run_update >"$state/out" 2>&1; then
+  echo "current update must reject mixed legacy state" >&2
+  exit 1
+fi
+grep -Fxq 'Then run: npx superpowers-manager install' "$state/out"
+if grep -Eq '^build |^install ' "$state/adapter.log"; then
+  echo "mixed legacy state must stop update before build or install" >&2
+  cat "$state/adapter.log" >&2
+  exit 1
+fi
+assert_no_codex_mutation
 
 # ---------------------------------------------------------------------------
 # Scenario 4: remove succeeds, add fails -> non-zero, recovery message names
@@ -464,7 +514,7 @@ fi
 
 # ---------------------------------------------------------------------------
 # Scenario 9: remove-add refresh mode -> plugin remove between marketplace
-# reconcile and plugin add; still only wrapper-scoped.
+# reconcile and plugin add; still only manager-scoped.
 # ---------------------------------------------------------------------------
 reset
 printf '%s\n' "$marketplace_absent" > "$state/marketplace_list.json"
@@ -483,14 +533,13 @@ if grep -Fq "openai-curated" "$log"; then
 fi
 
 # ---------------------------------------------------------------------------
-# Scenario 10: invalid refresh mode -> fails before any codex call.
+# Scenario 10: invalid refresh mode -> ownership may be inspected, but no Codex
+# mutation occurs.
 # ---------------------------------------------------------------------------
 reset
 printf '%s\n' "$marketplace_absent" > "$state/marketplace_list.json"
 expect_fail SUPERPOWERS_INSTALL_REFRESH_MODE=bogus
-if [ -s "$log" ]; then
-  echo "invalid refresh mode must fail before any codex call" >&2; exit 1
-fi
+assert_no_codex_mutation
 
 # ---------------------------------------------------------------------------
 # Scenario 11: malformed generated provenance is remediated by install. Probe

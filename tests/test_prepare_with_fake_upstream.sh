@@ -310,7 +310,7 @@ assert_prepare_version() {
   manifest="$tmpdir/$destination/.codex-plugin/plugin.json"
   version=$(read_json_key "$manifest" version)
   if [ "$version" != "$expected" ]; then
-    echo "unexpected wrapper version for $destination: $version (expected $expected)" >&2
+    echo "unexpected manager version for $destination: $version (expected $expected)" >&2
     exit 1
   fi
 }
@@ -456,7 +456,7 @@ manifest="$output/.codex-plugin/plugin.json"
 
 test -f "$output/skills/brainstorming/SKILL.md"
 test -f "$output/assets/superpowers-small.svg"
-# The fake upstream ships hooks/, but the wrapper's generated-tree contract is
+# The fake upstream ships hooks/, but the manager's generated-tree contract is
 # deliberately hook-free: no manifest hooks key and no physical hooks/ directory.
 if [ -e "$output/hooks" ]; then
   echo "generated plugin must not contain a hooks/ directory" >&2

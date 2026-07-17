@@ -3,6 +3,8 @@
 
 SPW_PLUGIN_ID="superpowers@superpowers-manager"
 SPW_MARKETPLACE_NAME="superpowers-manager"
+SPW_LEGACY_PLUGIN_ID="superpowers@superpowers-wrapper"
+SPW_LEGACY_MARKETPLACE_NAME="superpowers-wrapper"
 
 # Given a JSON document as the FIRST ARGUMENT (a string), print "present" if any
 # element of the top-level array <array_key> is an object whose <field> equals
@@ -100,16 +102,16 @@ PY
 spw_find_installed_metadata() {
   search_root="${SUPERPOWERS_INSTALLED_SEARCH_ROOT:-$HOME/.codex}"
   find "$search_root" \
-    \( -path "*/superpowers/.superpowers-upstream.json" \
-       -o -path "*/superpowers/*/.superpowers-upstream.json" \) \
+    \( -path "*/$SPW_MARKETPLACE_NAME/superpowers/.superpowers-upstream.json" \
+       -o -path "*/$SPW_MARKETPLACE_NAME/superpowers/*/.superpowers-upstream.json" \) \
     -type f 2>/dev/null | head -n 1
 }
 
 spw_find_installed_manifest() {
   search_root="${SUPERPOWERS_INSTALLED_SEARCH_ROOT:-$HOME/.codex}"
   find "$search_root" \
-    \( -path "*/superpowers/.codex-plugin/plugin.json" \
-       -o -path "*/superpowers/*/.codex-plugin/plugin.json" \) \
+    \( -path "*/$SPW_MARKETPLACE_NAME/superpowers/.codex-plugin/plugin.json" \
+       -o -path "*/$SPW_MARKETPLACE_NAME/superpowers/*/.codex-plugin/plugin.json" \) \
     -type f 2>/dev/null | head -n 1
 }
 

@@ -37,6 +37,8 @@ spw_adapter_uninstall "$uninstall_result" "$plugin_present" "$marketplace_presen
 
 spw_inspect_ownership "$inspect_result"
 spw_verify_uninstalled_resources "$inspect_result"
+identity_state=$(spw_adapter_result_get "$inspect_result" "identity_state")
+spw_report_legacy_state "$identity_state"
 
 echo "uninstall complete"
 echo "note: local generated artifacts under plugins/superpowers/ and .cache/upstream/ were left in place; remove them manually or regenerate with scripts/prepare."

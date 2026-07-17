@@ -29,10 +29,10 @@ if spw_marketplace_root_from_json '{"marketplaces":[{"name":"superpowers-manager
   echo "empty root must fail closed" >&2; exit 1
 fi
 if spw_marketplace_root_from_json '{"marketplaces":[{"name":"superpowers-manager"}]}' superpowers-manager >/dev/null 2>&1; then
-  echo "missing wrapper root must fail closed" >&2; exit 1
+  echo "missing manager root must fail closed" >&2; exit 1
 fi
 if spw_marketplace_root_from_json '{"marketplaces":[{"name":"superpowers-manager","root":17}]}' superpowers-manager >/dev/null 2>&1; then
-  echo "non-string wrapper root must fail closed" >&2; exit 1
+  echo "non-string manager root must fail closed" >&2; exit 1
 fi
 for invalid_item_json in \
   '{"marketplaces":["openai-curated"]}' \
@@ -85,7 +85,7 @@ fi
 
 # --- shipped Codex adapter marketplace reconciliation ---
 # Record every fake Codex invocation so reconciliation assertions cover the
-# exact command order and ensure only the wrapper marketplace can be mutated.
+# exact command order and ensure only the manager marketplace can be mutated.
 fake_log="$tmpdir/codex-commands.log"
 fake_codex="$tmpdir/fake-codex"
 mkdir -p "$tmpdir/requested"
@@ -173,16 +173,16 @@ assert_reconcile_fails_without_mutation schema-invalid-json
 FAKE_CODEX_LIST_OUTPUT='{"marketplaces":[{"name":"superpowers-manager","root":""}]}'
 assert_reconcile_fails_without_mutation empty-root-json
 FAKE_CODEX_LIST_OUTPUT='{"marketplaces":[{"name":"superpowers-manager"}]}'
-assert_reconcile_fails_without_mutation missing-wrapper-root-json
+assert_reconcile_fails_without_mutation missing-manager-root-json
 FAKE_CODEX_LIST_OUTPUT='{"marketplaces":[{"name":"superpowers-manager","root":17}]}'
-assert_reconcile_fails_without_mutation invalid-wrapper-root-json
+assert_reconcile_fails_without_mutation invalid-manager-root-json
 for invalid_item_case in \
   'non-object-item|{"marketplaces":["openai-curated"]}' \
   'missing-name|{"marketplaces":[{"root":"/other"}]}' \
   'renamed-name|{"marketplaces":[{"marketplaceName":"openai-curated","root":"/other"}]}' \
   'empty-name|{"marketplaces":[{"name":"","root":"/other"}]}' \
   'invalid-name|{"marketplaces":[{"name":17,"root":"/other"}]}' \
-  'malformed-after-wrapper|{"marketplaces":[{"name":"superpowers-manager","root":"/registered"},{"root":"/other"}]}'
+  'malformed-after-manager|{"marketplaces":[{"name":"superpowers-manager","root":"/registered"},{"root":"/other"}]}'
 do
   label=${invalid_item_case%%|*}
   FAKE_CODEX_LIST_OUTPUT=${invalid_item_case#*|}

@@ -60,6 +60,70 @@ run_adapter success inspect fingerprint fingerprint
 [ "$(spw_adapter_result_get "$RUN_RESULT" "view")" = "fingerprint" ]
 [ "$(spw_adapter_result_get "$RUN_RESULT" "fingerprint")" = "0123456789abcdef0123456789abcdef01234567" ]
 
+run_adapter success inspect ownership ownership
+[ "$RUN_RC" -eq 0 ]
+[ "$(spw_adapter_result_boolean "$RUN_RESULT" "resources.plugin")" = true ]
+[ "$(spw_adapter_result_boolean "$RUN_RESULT" "legacy_resources.plugin")" = false ]
+[ "$(spw_adapter_result_get "$RUN_RESULT" "identity_state")" = manager ]
+
+identity_codex="$tmpdir/identity-codex"
+cat > "$identity_codex" <<'SH'
+#!/bin/sh
+set -eu
+case "$*" in
+  "plugin list --json")
+    printf '%s\n' "${SPW_IDENTITY_PLUGIN_JSON:?}"
+    ;;
+  "plugin marketplace list --json")
+    printf '%s\n' "${SPW_IDENTITY_MARKETPLACE_JSON:?}"
+    ;;
+  *)
+    echo "unexpected identity Codex command: $*" >&2
+    exit 99
+    ;;
+esac
+SH
+chmod +x "$identity_codex"
+
+assert_identity_state() {
+  label="$1"
+  plugin_json="$2"
+  marketplace_json="$3"
+  expected_manager_plugin="$4"
+  expected_manager_marketplace="$5"
+  expected_legacy_plugin="$6"
+  expected_legacy_marketplace="$7"
+  expected_state="$8"
+  result="$tmpdir/identity-$label.result.json"
+  SPW_ADAPTER="$root/scripts/adapters/codex/adapter" \
+  SUPERPOWERS_CODEX="$identity_codex" \
+  SPW_IDENTITY_PLUGIN_JSON="$plugin_json" \
+  SPW_IDENTITY_MARKETPLACE_JSON="$marketplace_json" \
+    spw_invoke_adapter inspect "$result" ownership -- --view ownership
+  [ "$(spw_adapter_result_boolean "$result" resources.plugin)" = "$expected_manager_plugin" ]
+  [ "$(spw_adapter_result_boolean "$result" resources.marketplace)" = "$expected_manager_marketplace" ]
+  [ "$(spw_adapter_result_boolean "$result" legacy_resources.plugin)" = "$expected_legacy_plugin" ]
+  [ "$(spw_adapter_result_boolean "$result" legacy_resources.marketplace)" = "$expected_legacy_marketplace" ]
+  [ "$(spw_adapter_result_get "$result" identity_state)" = "$expected_state" ]
+}
+
+assert_identity_state neither \
+  '{"installed":[]}' \
+  '{"marketplaces":[]}' \
+  false false false false neither
+assert_identity_state manager \
+  '{"installed":[{"pluginId":"superpowers@superpowers-manager"}]}' \
+  '{"marketplaces":[{"name":"superpowers-manager"}]}' \
+  true true false false manager
+assert_identity_state legacy \
+  '{"installed":[{"pluginId":"superpowers@superpowers-wrapper"}]}' \
+  '{"marketplaces":[{"name":"superpowers-wrapper"}]}' \
+  false false true true legacy
+assert_identity_state both \
+  '{"installed":[{"pluginId":"superpowers@superpowers-manager"},{"pluginId":"superpowers@superpowers-wrapper"}]}' \
+  '{"marketplaces":[{"name":"superpowers-manager"},{"name":"superpowers-wrapper"}]}' \
+  true true true true both
+
 run_adapter success install "" both-hints
 [ "$RUN_RC" -eq 0 ]
 [ "$(spw_adapter_result_get "$RUN_RESULT" "verification_hints.mismatch")" = "installed commit differs" ]
@@ -73,7 +137,7 @@ grep -Fxq 'adapter-stderr-before-failure' "$RUN_STDERR"
 grep -Fxq 'replayed-warning' "$RUN_STDERR"
 grep -Fxq 'error: controlled failure' "$RUN_STDERR"
 grep -Fxq 'hint: retry later' "$RUN_STDERR"
-grep -Fxq 'hint: inspect wrapper state' "$RUN_STDERR"
+grep -Fxq 'hint: inspect manager state' "$RUN_STDERR"
 
 run_adapter wrong-operation build ""
 [ "$RUN_RC" -eq 2 ]

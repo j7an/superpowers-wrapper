@@ -36,6 +36,40 @@ spw_generated_commit_or_empty() (
   spw_metadata_commit_lenient_or_empty "$generated_metadata"
 )
 
+spw_require_no_legacy_state() {
+  identity_state="$1"
+  case "$identity_state" in
+    neither|manager)
+      return 0
+      ;;
+    legacy|both)
+      printf '%s\n' \
+        'Legacy superpowers-wrapper Codex state is installed.' \
+        'Run: npx superpowers-wrapper@0.1.1 uninstall' \
+        'Then run: npx superpowers-manager install' >&2
+      return 1
+      ;;
+    *)
+      spw_die "unknown adapter identity state: $identity_state"
+      ;;
+  esac
+}
+
+spw_report_legacy_state() {
+  case "$1" in
+    legacy|both)
+      printf '%s\n' \
+        'Legacy superpowers-wrapper Codex state remains installed.' \
+        'Run: npx superpowers-wrapper@0.1.1 uninstall'
+      ;;
+    neither|manager)
+      ;;
+    *)
+      spw_die "unknown adapter identity state: $1"
+      ;;
+  esac
+}
+
 spw_verify_installed_fingerprint() {
   desired_commit="$1"
   install_result="$2"

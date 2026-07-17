@@ -28,10 +28,31 @@ adapter_log="$tmpdir/adapter.log"
 recording_adapter="$tmpdir/recording-adapter"
 cat > "$recording_adapter" <<EOF
 #!/bin/sh
-printf '%s\n' "\$*" > "$adapter_log"
+printf '%s\n' "\$*" >> "$adapter_log"
 exec "$pkg/scripts/adapters/codex/adapter" "\$@"
 EOF
 chmod +x "$recording_adapter"
+
+probe_codex="$tmpdir/codex"
+cat > "$probe_codex" <<'SH'
+#!/bin/sh
+set -eu
+case "$*" in
+  "plugin list --json")
+    printf '%s\n' "${SPW_PROBE_PLUGIN_JSON:?}"
+    ;;
+  "plugin marketplace list --json")
+    printf '%s\n' "${SPW_PROBE_MARKETPLACE_JSON:?}"
+    ;;
+  *)
+    echo "unexpected probe Codex command: $*" >&2
+    exit 99
+    ;;
+esac
+SH
+chmod +x "$probe_codex"
+probe_plugin_json='{"installed":[]}'
+probe_marketplace_json='{"marketplaces":[]}'
 
 tool_path="$tmpdir/tool-path"
 probe_tmp="$tmpdir/probe-tmp"
@@ -88,11 +109,13 @@ generated_commit_from_pkg() {
 assert_probe_porcelain() {
   expected_installed="$1"
   expected_status="$2"
-  output="$3"
+  expected_identity="$3"
+  output="$4"
 
   printf '%s\n' "$output" | grep -Fxq "desired_commit=$desired_commit"
   printf '%s\n' "$output" | grep -Fxq "generated_commit=$(generated_commit_from_pkg)"
   printf '%s\n' "$output" | grep -Fxq "installed_commit=$expected_installed"
+  printf '%s\n' "$output" | grep -Fxq "identity_state=$expected_identity"
   printf '%s\n' "$output" | grep -Fxq "status=$expected_status"
 }
 
@@ -101,7 +124,10 @@ run_probe() {
   TMPDIR="$probe_tmp" \
   SUPERPOWERS_REF="$desired_commit" \
   SUPERPOWERS_UPSTREAM_URL="$upstream" \
+  SUPERPOWERS_CODEX="$probe_codex" \
   SUPERPOWERS_INSTALLED_SEARCH_ROOT="$tmpdir/codex-home" \
+  SPW_PROBE_PLUGIN_JSON="$probe_plugin_json" \
+  SPW_PROBE_MARKETPLACE_JSON="$probe_marketplace_json" \
   SPW_ADAPTER="$recording_adapter" \
   /bin/sh "$pkg/scripts/probe" --porcelain
 }
@@ -114,16 +140,38 @@ assert_probe_tmp_empty() {
   fi
 }
 
-# Scenario 1: malformed installed metadata falls back to the manifest short SHA,
-# and probe still works with no codex executable on PATH.
+# Scenario 1: malformed installed metadata falls back to the manifest short SHA.
 write_generated_metadata "$desired_commit"
 printf '%s\n' '{' > "$installed_root/.superpowers-upstream.json"
 write_installed_manifest "0.0.0+manager.$desired_short"
 : > "$adapter_log"
 output=$(run_probe)
-assert_probe_porcelain "$desired_short" "current" "$output"
+assert_probe_porcelain "$desired_short" "current" neither "$output"
 grep -Fxq "inspect --view fingerprint" "$adapter_log"
+grep -Fxq "inspect --view ownership" "$adapter_log"
 assert_probe_tmp_empty
+
+# Probe reports every validated identity state without mutation.
+probe_plugin_json='{"installed":[{"pluginId":"superpowers@superpowers-manager"}]}'
+probe_marketplace_json='{"marketplaces":[{"name":"superpowers-manager"}]}'
+: > "$adapter_log"
+output=$(run_probe)
+assert_probe_porcelain "$desired_short" "current" manager "$output"
+
+probe_plugin_json='{"installed":[{"pluginId":"superpowers@superpowers-wrapper"}]}'
+probe_marketplace_json='{"marketplaces":[{"name":"superpowers-wrapper"}]}'
+: > "$adapter_log"
+output=$(run_probe)
+assert_probe_porcelain "$desired_short" "current" legacy "$output"
+
+probe_plugin_json='{"installed":[{"pluginId":"superpowers@superpowers-manager"},{"pluginId":"superpowers@superpowers-wrapper"}]}'
+probe_marketplace_json='{"marketplaces":[{"name":"superpowers-manager"},{"name":"superpowers-wrapper"}]}'
+: > "$adapter_log"
+output=$(run_probe)
+assert_probe_porcelain "$desired_short" "current" both "$output"
+
+probe_plugin_json='{"installed":[]}'
+probe_marketplace_json='{"marketplaces":[]}'
 
 # Scenario 1b: semantically invalid metadata falls through to a valid manifest
 # fingerprint instead of poisoning the protocol response.
@@ -131,7 +179,7 @@ printf '%s\n' '{"commit":"not-a-fingerprint"}' > "$installed_root/.superpowers-u
 write_installed_manifest "0.0.0+manager.$desired_short"
 : > "$adapter_log"
 output=$(run_probe)
-assert_probe_porcelain "$desired_short" "current" "$output"
+assert_probe_porcelain "$desired_short" "current" neither "$output"
 grep -Fxq "inspect --view fingerprint" "$adapter_log"
 assert_probe_tmp_empty
 
@@ -141,7 +189,7 @@ printf '%s\n' '{"commit":"not-a-fingerprint"}' > "$installed_root/.superpowers-u
 printf '%s\n' '{' > "$installed_root/.codex-plugin/plugin.json"
 : > "$adapter_log"
 output=$(run_probe)
-assert_probe_porcelain "" "needs install" "$output"
+assert_probe_porcelain "" "needs install" neither "$output"
 grep -Fxq "inspect --view fingerprint" "$adapter_log"
 assert_probe_tmp_empty
 
@@ -149,7 +197,7 @@ assert_probe_tmp_empty
 rm -f "$installed_root/.codex-plugin/plugin.json"
 : > "$adapter_log"
 output=$(run_probe)
-assert_probe_porcelain "" "needs install" "$output"
+assert_probe_porcelain "" "needs install" neither "$output"
 grep -Fxq "inspect --view fingerprint" "$adapter_log"
 assert_probe_tmp_empty
 
@@ -158,7 +206,7 @@ assert_probe_tmp_empty
 write_generated_metadata "0000000000000000000000000000000000000000"
 : > "$adapter_log"
 output=$(run_probe)
-assert_probe_porcelain "" "needs prepare" "$output"
+assert_probe_porcelain "" "needs prepare" neither "$output"
 grep -Fxq "inspect --view fingerprint" "$adapter_log"
 assert_probe_tmp_empty
 
@@ -170,6 +218,7 @@ output=$(run_probe)
 printf '%s\n' "$output" | grep -Fxq "desired_commit=$desired_commit"
 printf '%s\n' "$output" | grep -Fxq "generated_commit="
 printf '%s\n' "$output" | grep -Fxq "installed_commit="
+printf '%s\n' "$output" | grep -Fxq "identity_state=neither"
 printf '%s\n' "$output" | grep -Fxq "status=needs prepare"
 grep -Fxq "inspect --view fingerprint" "$adapter_log"
 assert_probe_tmp_empty

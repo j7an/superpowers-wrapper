@@ -20,7 +20,7 @@ case "$scenario" in
             ;;
           ownership)
             printf '%s\n' \
-              '{"protocol":1,"operation":"inspect","ok":true,"messages":[],"result":{"view":"ownership","resources":{"plugin":true,"marketplace":false}},"error":null}'
+              '{"protocol":1,"operation":"inspect","ok":true,"messages":[],"result":{"view":"ownership","resources":{"plugin":true,"marketplace":false},"legacy_resources":{"plugin":false,"marketplace":false},"identity_state":"manager"},"error":null}'
             ;;
           *)
             printf '%s\n' \
@@ -53,7 +53,7 @@ case "$scenario" in
   controlled-failure)
     printf '%s\n' 'adapter-stderr-before-failure' >&2
     printf '%s\n' \
-      '{"protocol":1,"operation":"'"$operation"'","ok":false,"messages":[{"channel":"stdout","text":"before-failure"},{"channel":"stderr","text":"replayed-warning"}],"result":null,"error":{"code":"controlled-failure","message":"controlled failure","hints":["retry later","inspect wrapper state"]}}'
+      '{"protocol":1,"operation":"'"$operation"'","ok":false,"messages":[{"channel":"stdout","text":"before-failure"},{"channel":"stderr","text":"replayed-warning"}],"result":null,"error":{"code":"controlled-failure","message":"controlled failure","hints":["retry later","inspect manager state"]}}'
     exit 1
     ;;
   malformed)

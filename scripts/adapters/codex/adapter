@@ -531,6 +531,9 @@ spw_codex_inspect() {
       if ! plugin_result=$(spw_json_array_has "$plugin_listing" "installed" "pluginId" "$SPW_PLUGIN_ID"); then
         spw_codex_failure inspect "inspect-failed" "cannot parse output of '$codex_bin plugin list --json'" "" "$messages_file"
       fi
+      if ! legacy_plugin_result=$(spw_json_array_has "$plugin_listing" "installed" "pluginId" "$SPW_LEGACY_PLUGIN_ID"); then
+        spw_codex_failure inspect "inspect-failed" "cannot parse output of '$codex_bin plugin list --json'" "" "$messages_file"
+      fi
 
       : > "$stderr_file"
       if ! marketplace_listing=$("$codex_bin" plugin marketplace list --json 2>"$stderr_file"); then
@@ -541,9 +544,28 @@ spw_codex_inspect() {
       if ! marketplace_result=$(spw_json_array_has "$marketplace_listing" "marketplaces" "name" "$SPW_MARKETPLACE_NAME"); then
         spw_codex_failure inspect "inspect-failed" "cannot parse output of '$codex_bin plugin marketplace list --json'" "" "$messages_file"
       fi
+      if ! legacy_marketplace_result=$(spw_json_array_has "$marketplace_listing" "marketplaces" "name" "$SPW_LEGACY_MARKETPLACE_NAME"); then
+        spw_codex_failure inspect "inspect-failed" "cannot parse output of '$codex_bin plugin marketplace list --json'" "" "$messages_file"
+      fi
+
+      manager_present=false
+      legacy_present=false
+      if [ "$plugin_result" = present ] || [ "$marketplace_result" = present ]; then
+        manager_present=true
+      fi
+      if [ "$legacy_plugin_result" = present ] || [ "$legacy_marketplace_result" = present ]; then
+        legacy_present=true
+      fi
+      case "$manager_present:$legacy_present" in
+        false:false) identity_state=neither ;;
+        true:false) identity_state=manager ;;
+        false:true) identity_state=legacy ;;
+        true:true) identity_state=both ;;
+        *) spw_codex_failure inspect "inspect-failed" "cannot derive Codex identity state" "" "$messages_file" ;;
+      esac
 
       spw_codex_success inspect \
-        "{\"view\":\"ownership\",\"resources\":{\"plugin\":$([ "$plugin_result" = present ] && printf true || printf false),\"marketplace\":$([ "$marketplace_result" = present ] && printf true || printf false)}}" \
+        "{\"view\":\"ownership\",\"resources\":{\"plugin\":$([ "$plugin_result" = present ] && printf true || printf false),\"marketplace\":$([ "$marketplace_result" = present ] && printf true || printf false)},\"legacy_resources\":{\"plugin\":$([ "$legacy_plugin_result" = present ] && printf true || printf false),\"marketplace\":$([ "$legacy_marketplace_result" = present ] && printf true || printf false)},\"identity_state\":\"$identity_state\"}" \
         "$messages_file"
       ;;
     *)
