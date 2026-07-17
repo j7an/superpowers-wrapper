@@ -10,7 +10,7 @@ root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 spw_require_command python3
 
 tmp_parent="${TMPDIR:-/tmp}"
-if ! uninstall_workspace=$(mktemp -d "$tmp_parent/superpowers-wrapper.uninstall.XXXXXX"); then
+if ! uninstall_workspace=$(mktemp -d "$tmp_parent/superpowers-manager.uninstall.XXXXXX"); then
   spw_die "cannot create uninstall workspace under $tmp_parent"
 fi
 inspect_result="$uninstall_workspace/inspect.json"
@@ -37,6 +37,8 @@ spw_adapter_uninstall "$uninstall_result" "$plugin_present" "$marketplace_presen
 
 spw_inspect_ownership "$inspect_result"
 spw_verify_uninstalled_resources "$inspect_result"
+identity_state=$(spw_adapter_result_get "$inspect_result" "identity_state")
+spw_report_legacy_state "$identity_state"
 
 echo "uninstall complete"
 echo "note: local generated artifacts under plugins/superpowers/ and .cache/upstream/ were left in place; remove them manually or regenerate with scripts/prepare."

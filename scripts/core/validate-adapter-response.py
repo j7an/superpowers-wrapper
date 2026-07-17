@@ -123,14 +123,43 @@ def validate_result(
                 raise ProtocolError("fingerprint must be null, 7 hex, or 40 hex")
             return {"view": "fingerprint", "fingerprint": fingerprint}
         if inspect_view == "ownership":
-            require_exact_keys(result, {"view", "resources"}, "inspect result")
+            require_exact_keys(
+                result,
+                {"view", "resources", "legacy_resources", "identity_state"},
+                "inspect result",
+            )
             if result.get("view") != "ownership":
                 raise ProtocolError("inspect result view must be ownership")
             resources = require_object(result.get("resources"), "resources")
-            require_exact_keys(resources, OWNERSHIP_KEYS, "resources")
-            if not all(isinstance(resources[key], bool) for key in OWNERSHIP_KEYS):
-                raise ProtocolError("owned resources must be Boolean")
-            return {"view": "ownership", "resources": resources}
+            legacy_resources = require_object(
+                result.get("legacy_resources"), "legacy_resources"
+            )
+            for label, group in (
+                ("resources", resources),
+                ("legacy_resources", legacy_resources),
+            ):
+                require_exact_keys(group, OWNERSHIP_KEYS, label)
+                if not all(isinstance(group[key], bool) for key in OWNERSHIP_KEYS):
+                    raise ProtocolError(f"{label} values must be Boolean")
+            manager_present = any(resources.values())
+            legacy_present = any(legacy_resources.values())
+            expected_state = {
+                (False, False): "neither",
+                (True, False): "manager",
+                (False, True): "legacy",
+                (True, True): "both",
+            }[(manager_present, legacy_present)]
+            identity_state = result.get("identity_state")
+            if identity_state != expected_state:
+                raise ProtocolError(
+                    f"identity_state must be {expected_state} for the reported resources"
+                )
+            return {
+                "view": "ownership",
+                "resources": resources,
+                "legacy_resources": legacy_resources,
+                "identity_state": identity_state,
+            }
         raise ProtocolError("inspect view must be fingerprint or ownership")
     if operation == "install":
         require_exact_keys(result, {"verification_hints"}, "install result")

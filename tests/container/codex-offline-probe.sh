@@ -7,7 +7,7 @@ root=$(mktemp -d)
 trap 'rm -rf "$root"' EXIT INT TERM
 market="$root/market-a"
 moved="$root/market-b"
-plugin_id="wrapper-probe@superpowers-wrapper-probe"
+plugin_id="manager-probe@superpowers-manager-probe"
 commit_a=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 commit_b=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 version_a=0.0.0+probe.aaaaaaa
@@ -30,14 +30,14 @@ write_market() {
   target="$1"
   commit="$2"
   short=$(printf '%s' "$commit" | cut -c 1-7)
-  mkdir -p "$target/.agents/plugins" "$target/plugins/wrapper-probe/.codex-plugin" "$target/plugins/wrapper-probe/skills/probe"
+  mkdir -p "$target/.agents/plugins" "$target/plugins/manager-probe/.codex-plugin" "$target/plugins/manager-probe/skills/probe"
   cat > "$target/.agents/plugins/marketplace.json" <<'JSON'
 {
-  "name": "superpowers-wrapper-probe",
-  "interface": {"displayName": "Superpowers Wrapper Probe"},
+  "name": "superpowers-manager-probe",
+  "interface": {"displayName": "Superpowers Manager Probe"},
   "plugins": [{
-    "name": "wrapper-probe",
-    "source": {"source": "local", "path": "./plugins/wrapper-probe"},
+    "name": "manager-probe",
+    "source": {"source": "local", "path": "./plugins/manager-probe"},
     "policy": {
       "installation": "AVAILABLE",
       "authentication": "ON_INSTALL",
@@ -47,25 +47,25 @@ write_market() {
   }]
 }
 JSON
-  cat > "$target/plugins/wrapper-probe/.codex-plugin/plugin.json" <<JSON
+  cat > "$target/plugins/manager-probe/.codex-plugin/plugin.json" <<JSON
 {
-  "name": "wrapper-probe",
+  "name": "manager-probe",
   "version": "0.0.0+probe.$short",
   "description": "Throwaway offline Codex probe.",
   "skills": "./skills/",
   "interface": {
-    "displayName": "Wrapper Probe",
+    "displayName": "Manager Probe",
     "shortDescription": "Offline marketplace probe.",
     "longDescription": "Temporary local plugin used only in an isolated container.",
-    "developerName": "superpowers-wrapper",
+    "developerName": "superpowers-manager",
     "category": "Developer Tools",
     "capabilities": ["skills"],
-    "defaultPrompt": ["Use wrapper-probe only for local marketplace testing."]
+    "defaultPrompt": ["Use manager-probe only for local marketplace testing."]
   }
 }
 JSON
-  printf '%s\n' '---' 'name: probe' 'description: offline probe' '---' '# Probe' > "$target/plugins/wrapper-probe/skills/probe/SKILL.md"
-  printf '{"commit":"%s"}\n' "$commit" > "$target/plugins/wrapper-probe/.superpowers-upstream.json"
+  printf '%s\n' '---' 'name: probe' 'description: offline probe' '---' '# Probe' > "$target/plugins/manager-probe/skills/probe/SKILL.md"
+  printf '{"commit":"%s"}\n' "$commit" > "$target/plugins/manager-probe/.superpowers-upstream.json"
 }
 
 assert_marketplace_root() {
@@ -79,11 +79,11 @@ import sys
 listing, expected_root = sys.argv[1:]
 data = json.loads(listing)
 for item in data.get("marketplaces", []):
-    if item.get("name") == "superpowers-wrapper-probe":
+    if item.get("name") == "superpowers-manager-probe":
         actual_root = item.get("root")
         if isinstance(actual_root, str) and os.path.realpath(actual_root) == os.path.realpath(expected_root):
             raise SystemExit(0)
-raise SystemExit("wrapper probe marketplace does not point at the expected root")
+raise SystemExit("manager probe marketplace does not point at the expected root")
 PY
 }
 
@@ -102,7 +102,7 @@ if not any(
     isinstance(item, dict) and item.get("pluginId") == expected_plugin_id
     for item in installed
 ):
-    raise SystemExit("wrapper probe is not active in the Codex plugin listing")
+    raise SystemExit("manager probe is not active in the Codex plugin listing")
 PY
 }
 
@@ -110,7 +110,7 @@ install_plugin_and_assert_active() {
   expected_version="$1"
   expected_commit="$2"
   unexpected_commit="$3"
-  expected_root="$HOME/.codex/plugins/cache/superpowers-wrapper-probe/wrapper-probe/$expected_version"
+  expected_root="$HOME/.codex/plugins/cache/superpowers-manager-probe/manager-probe/$expected_version"
 
   install_output=$(run_codex plugin add "$plugin_id")
   printf '%s\n' "$install_output"
@@ -153,16 +153,16 @@ install_plugin_and_assert_active "$version_a" "$commit_a" "$commit_b"
 assert_marketplace_root "$market"
 
 write_market "$moved" "$commit_b"
-run_codex plugin marketplace remove superpowers-wrapper-probe
+run_codex plugin marketplace remove superpowers-manager-probe
 run_codex plugin marketplace add "$moved"
 install_plugin_and_assert_active "$version_b" "$commit_b" "$commit_a"
 assert_marketplace_root "$moved"
 
 run_codex plugin remove "$plugin_id"
-run_codex plugin marketplace remove superpowers-wrapper-probe
+run_codex plugin marketplace remove superpowers-manager-probe
 
 final_plugins=$(run_codex plugin list --json)
 final_marketplaces=$(run_codex plugin marketplace list --json)
 if printf '%s\n' "$final_plugins" | grep -Fq "$plugin_id"; then exit 1; fi
-if printf '%s\n' "$final_marketplaces" | grep -Fq 'superpowers-wrapper-probe'; then exit 1; fi
+if printf '%s\n' "$final_marketplaces" | grep -Fq 'superpowers-manager-probe'; then exit 1; fi
 echo "codex offline probe: OK"

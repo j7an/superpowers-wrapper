@@ -7,12 +7,22 @@ root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 tmpdir=$(mktemp -d)
 trap 'rm -rf "$tmpdir"' EXIT INT TERM
 
+# Legacy cache entries must never satisfy manager fingerprint inspection.
+legacy="$tmpdir/.codex/plugins/cache/superpowers-wrapper/superpowers/0.1.1"
+mkdir -p "$legacy/.codex-plugin"
+printf '%s\n' '{"commit":"1111111111111111111111111111111111111111"}' \
+  > "$legacy/.superpowers-upstream.json"
+printf '%s\n' '{"name":"superpowers","version":"0.0.0+wrapper.1111111"}' \
+  > "$legacy/.codex-plugin/plugin.json"
+[ -z "$(SUPERPOWERS_INSTALLED_SEARCH_ROOT="$tmpdir/.codex" spw_find_installed_metadata)" ]
+[ -z "$(SUPERPOWERS_INSTALLED_SEARCH_ROOT="$tmpdir/.codex" spw_find_installed_manifest)" ]
+
 # Reproduce the real Codex installed-cache layout observed by the Task 1
 # behavior probe: ~/.codex/plugins/cache/<marketplace>/<plugin>/<version>/...
 # The <version> directory segment sits between the plugin name and the files,
 # so the finders must tolerate it (an earlier pattern anchored the file
 # directly under */superpowers/ and silently missed every real install).
-cache="$tmpdir/.codex/plugins/cache/superpowers-wrapper/superpowers/6.0.3+wrapper.abc1234"
+cache="$tmpdir/.codex/plugins/cache/superpowers-manager/superpowers/6.0.3+manager.abc1234"
 mkdir -p "$cache/.codex-plugin"
 cat > "$cache/.superpowers-upstream.json" <<'JSON'
 {
@@ -22,7 +32,7 @@ JSON
 cat > "$cache/.codex-plugin/plugin.json" <<'JSON'
 {
   "name": "superpowers",
-  "version": "6.0.3+wrapper.abc1234"
+  "version": "6.0.3+manager.abc1234"
 }
 JSON
 
@@ -34,7 +44,7 @@ test "$found_manifest" = "$cache/.codex-plugin/plugin.json"
 
 # Backward-compatible: a layout with no intervening version directory must
 # still resolve (covers staging copies and any future flat cache layout).
-flat="$tmpdir/flat/superpowers"
+flat="$tmpdir/flat/superpowers-manager/superpowers"
 mkdir -p "$flat/.codex-plugin"
 cat > "$flat/.superpowers-upstream.json" <<'JSON'
 {
@@ -44,7 +54,7 @@ JSON
 cat > "$flat/.codex-plugin/plugin.json" <<'JSON'
 {
   "name": "superpowers",
-  "version": "0.0.0-main+wrapper.0000000"
+  "version": "0.0.0-main+manager.0000000"
 }
 JSON
 

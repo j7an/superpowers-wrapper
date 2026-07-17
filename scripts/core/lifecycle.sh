@@ -36,22 +36,56 @@ spw_generated_commit_or_empty() (
   spw_metadata_commit_lenient_or_empty "$generated_metadata"
 )
 
+spw_require_no_legacy_state() {
+  identity_state="$1"
+  case "$identity_state" in
+    neither|manager)
+      return 0
+      ;;
+    legacy|both)
+      printf '%s\n' \
+        'Legacy superpowers-wrapper Codex state is installed.' \
+        'Run: npx superpowers-wrapper@0.1.1 uninstall' \
+        'Then run: npx superpowers-manager install' >&2
+      return 1
+      ;;
+    *)
+      spw_die "unknown adapter identity state: $identity_state"
+      ;;
+  esac
+}
+
+spw_report_legacy_state() {
+  case "$1" in
+    legacy|both)
+      printf '%s\n' \
+        'Legacy superpowers-wrapper Codex state remains installed.' \
+        'Run: npx superpowers-wrapper@0.1.1 uninstall'
+      ;;
+    neither|manager)
+      ;;
+    *)
+      spw_die "unknown adapter identity state: $1"
+      ;;
+  esac
+}
+
 spw_verify_installed_fingerprint() {
   desired_commit="$1"
   install_result="$2"
   inspect_result="$3"
   if ! spw_inspect_fingerprint "$inspect_result"; then
-    echo "error: installed wrapper fingerprint inspection failed after install." >&2
+    echo "error: installed manager fingerprint inspection failed after install." >&2
     return 1
   fi
   if ! installed_commit=$(spw_adapter_result_get "$inspect_result" "fingerprint"); then
-    echo "error: cannot parse installed wrapper fingerprint inspection result after install." >&2
+    echo "error: cannot parse installed manager fingerprint inspection result after install." >&2
     return 1
   fi
   printf 'desired_commit=%s\n' "$desired_commit"
   printf 'installed_commit=%s\n' "$installed_commit"
   if [ -n "$installed_commit" ] && spw_commit_matches "$desired_commit" "$installed_commit"; then
-    echo "wrapper updated"
+    echo "manager updated"
     return 0
   fi
 
@@ -65,9 +99,9 @@ spw_verify_installed_fingerprint() {
   fi
 
   if [ -n "$installed_commit" ]; then
-    echo "error: installed wrapper fingerprint does not match the prepared plugin after install." >&2
+    echo "error: installed manager fingerprint does not match the prepared plugin after install." >&2
   else
-    echo "error: installed wrapper fingerprint is not detectable after install." >&2
+    echo "error: installed manager fingerprint is not detectable after install." >&2
   fi
   if [ -n "$hint" ]; then
     echo "hint: $hint" >&2

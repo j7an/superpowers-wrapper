@@ -38,9 +38,9 @@ assert_file "scripts/adapters/codex/validate-generated-plugin.py"
 assert_file "scripts/core/validate-adapter-response.py"
 
 assert_contains "package.json" '"type": "module"'
-assert_not_contains "bin/superpowers-wrapper.js" "import.meta.main"
+assert_not_contains "bin/superpowers-manager.js" "import.meta.main"
 assert_contains "config/upstream-ref" "latest-release"
-assert_contains ".agents/plugins/marketplace.json" '"name": "superpowers-wrapper"'
+assert_contains ".agents/plugins/marketplace.json" '"name": "superpowers-manager"'
 assert_contains ".agents/plugins/marketplace.json" '"products": ["CODEX"]'
 assert_contains ".gitignore" "plugins/superpowers/.codex-plugin/plugin.json"
 assert_contains ".gitignore" "plugins/.superpowers.prepare.*/"
@@ -56,5 +56,13 @@ assert_contains "README.md" "sh tests/container.sh                    # Layers 1
 assert_contains "README.md" "no public harness selector"
 assert_contains "RELEASING.md" 'Ensure `main` is green (`sh tests/container.sh`)'
 assert_contains "RELEASING.md" "sh tests/container.sh"
+assert_contains "RELEASING.md" 'immutable out-of-main maintenance tag `v0.1.4`'
+assert_contains "RELEASING.md" 'minor produces `0.2.0`'
+assert_contains "RELEASING.md" 'j7an/superpowers-manager'
+assert_contains "RELEASING.md" 'workflow `release.yml`'
+assert_contains "RELEASING.md" 'environment `npm`'
+assert_not_contains "RELEASING.md" 'npm-bootstrap'
+assert_not_contains "RELEASING.md" 'NPM_BOOTSTRAP_TOKEN'
+assert_not_contains "RELEASING.md" 'j7an/superpowers-wrapper'
 assert_contains "tests/manual/codex-behavior-probe.sh" "Optional native-only Codex compatibility probe"
 assert_not_contains "README.md" "The automated suite is fully hermetic: it uses a fake local upstream repo and a"

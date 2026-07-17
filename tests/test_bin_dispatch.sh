@@ -11,8 +11,8 @@ node_bin=$(command -v node)
 # --- Fake package root: real bin, fake scripts that log and exit ---
 pkg="$tmpdir/pkg"
 mkdir -p "$pkg/bin" "$pkg/scripts"
-cp "$root/bin/superpowers-wrapper.js" "$pkg/bin/"
-printf '{ "name": "superpowers-wrapper", "version": "9.9.9-test", "type": "module" }\n' > "$pkg/package.json"
+cp "$root/bin/superpowers-manager.js" "$pkg/bin/"
+printf '{ "name": "superpowers-manager", "version": "9.9.9-test", "type": "module" }\n' > "$pkg/package.json"
 log="$tmpdir/dispatch.log"
 for cmd in prepare probe install update uninstall; do
   cat > "$pkg/scripts/$cmd" <<EOF
@@ -37,7 +37,7 @@ ln -s /bin/sh "$fakebin/sh"
 ln -s "$node_bin" "$fakebin/node"
 
 run_bin() {
-  PATH="$fakebin" "$fakebin/node" "$pkg/bin/superpowers-wrapper.js" "$@"
+  PATH="$fakebin" "$fakebin/node" "$pkg/bin/superpowers-manager.js" "$@"
 }
 
 # --- Routing: each subcommand reaches its script with its args ---
@@ -90,8 +90,8 @@ version_out=$(run_bin --version)
 [ "$version_out" = "9.9.9-test" ] || { echo "unexpected --version output: $version_out" >&2; exit 1; }
 
 # npm/npx invoke bins through links; the ESM direct-entry gate must resolve it.
-bin_link="$tmpdir/superpowers-wrapper"
-ln -s "$pkg/bin/superpowers-wrapper.js" "$bin_link"
+bin_link="$tmpdir/superpowers-manager"
+ln -s "$pkg/bin/superpowers-manager.js" "$bin_link"
 version_out=$(PATH="$fakebin" "$fakebin/node" "$bin_link" --version)
 [ "$version_out" = "9.9.9-test" ] || { echo "unexpected symlinked --version output: $version_out" >&2; exit 1; }
 
@@ -109,7 +109,7 @@ rc=0; run_bin probe >/dev/null 2>&1 || rc=$?
 PATH="$fakebin" \
 SUPERPOWERS_REF=abc123 \
 SUPERPOWERS_VALIDATOR=/tmp/custom-validator.py \
-"$fakebin/node" "$pkg/bin/superpowers-wrapper.js" update >/dev/null
+"$fakebin/node" "$pkg/bin/superpowers-manager.js" update >/dev/null
 grep -Fqx "update  ref=abc123" "$log"
 grep -Fqx "update validator=/tmp/custom-validator.py" "$log"
 
@@ -122,7 +122,7 @@ grep -Fq "required command not found: git" "$tmpdir/err"
 [ ! -s "$log" ] || { echo "preflight failure must not dispatch" >&2; exit 1; }
 printf '#!/bin/sh\nexit 0\n' > "$fakebin/git" && chmod +x "$fakebin/git"
 
-# --- codex required for install, not for probe ---
+# --- codex required for probe and install ---
 rm "$fakebin/codex"
 : > "$log"
 cat > "$pkg/scripts/probe" <<EOF
@@ -131,8 +131,10 @@ printf 'probe ran\n' >> "$log"
 exit 0
 EOF
 chmod +x "$pkg/scripts/probe"
-run_bin probe >/dev/null
-grep -Fq "probe ran" "$log"
+rc=0; run_bin probe >/dev/null 2>"$tmpdir/err" || rc=$?
+[ "$rc" -eq 1 ]
+grep -Fq "required command not found: codex" "$tmpdir/err"
+[ ! -s "$log" ] || { echo "missing codex must not dispatch probe" >&2; exit 1; }
 : > "$log"
 rc=0; run_bin install >/dev/null 2>"$tmpdir/err" || rc=$?
 [ "$rc" -eq 1 ]

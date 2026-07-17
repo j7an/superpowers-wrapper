@@ -4,7 +4,7 @@
 import * as assert from 'node:assert';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import * as bin from '../../bin/superpowers-wrapper.js';
+import * as bin from '../../bin/superpowers-manager.js';
 
 // --- parseArgs ---
 assert.deepStrictEqual(bin.parseArgs([]), { kind: 'run', cmd: 'update', args: [] });
@@ -36,7 +36,7 @@ assert.strictEqual(win.file, gitBash);
 assert.deepStrictEqual(win.argv, [path.join('C:\\pkg', 'scripts', 'update'), '-x']);
 
 // --- resolvePackageRoot walks up to package.json from the bin's real path ---
-const root = bin.resolvePackageRoot(path.join(import.meta.dirname, '..', '..', 'bin', 'superpowers-wrapper.js'));
+const root = bin.resolvePackageRoot(path.join(import.meta.dirname, '..', '..', 'bin', 'superpowers-manager.js'));
 assert.strictEqual(root, path.resolve(import.meta.dirname, '..', '..'));
 
 // --- isMain supports all declared Node 24.x releases and resolves bin symlinks ---
@@ -45,11 +45,11 @@ assert.strictEqual(bin.isMain(entryPath, process.argv[1]), true);
 assert.strictEqual(bin.isMain(entryPath, undefined), false);
 assert.throws(() => bin.isMain(entryPath, path.join(import.meta.dirname, 'missing-entry.js')));
 
-// --- preflight: codex required only for install/update/uninstall ---
+// --- preflight: codex required for every command that inspects or mutates Codex ---
 const emptyEnv = { PATH: '/nonexistent-dir-for-test' };
 const probePf = bin.preflight('probe', emptyEnv, 'linux');
 assert.strictEqual(probePf.ok, false);
-assert.ok(!probePf.errors.join('\n').includes('codex'), 'probe must not require codex');
+assert.ok(probePf.errors.join('\n').includes('codex'), 'probe must require codex');
 const installPf = bin.preflight('install', emptyEnv, 'linux');
 assert.strictEqual(installPf.ok, false);
 assert.ok(installPf.errors.join('\n').includes('codex'), 'install must require codex');

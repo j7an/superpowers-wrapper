@@ -45,7 +45,17 @@ if [ "$1" = plugin ] && [ "$2" = remove ]; then
   elif [ -f "$state/remove_plugin_missing_installed" ]; then
     printf '%s\n' '{"available":[]}' > "$state/plugin_list.json"
   else
-    printf '%s\n' '{"installed":[],"available":[]}' > "$state/plugin_list.json"
+    python3 - "$state/plugin_list.json" "$3" <<'PY'
+import json, sys
+path, plugin_id = sys.argv[1:]
+with open(path, encoding="utf-8") as handle:
+    data = json.load(handle)
+data["installed"] = [
+    item for item in data["installed"] if item.get("pluginId") != plugin_id
+]
+with open(path, "w", encoding="utf-8") as handle:
+    json.dump(data, handle)
+PY
   fi
   exit 0
 fi
@@ -54,7 +64,19 @@ if [ "$1" = plugin ] && [ "$2" = marketplace ] && [ "$3" = remove ]; then
     printf '%s\n' 'marketplace remove exploded' >&2
     exit 1
   fi
-  [ -f "$state/remove_noop" ] || printf '%s\n' '{"marketplaces":[{"name":"openai-curated","root":"/x"}]}' > "$state/marketplace_list.json"
+  if [ ! -f "$state/remove_noop" ]; then
+    python3 - "$state/marketplace_list.json" "$4" <<'PY'
+import json, sys
+path, marketplace_name = sys.argv[1:]
+with open(path, encoding="utf-8") as handle:
+    data = json.load(handle)
+data["marketplaces"] = [
+    item for item in data["marketplaces"] if item.get("name") != marketplace_name
+]
+with open(path, "w", encoding="utf-8") as handle:
+    json.dump(data, handle)
+PY
+  fi
   exit 0
 fi
 exit 0
@@ -69,10 +91,14 @@ exec "$root/scripts/adapters/codex/adapter" "\$@"
 EOF
 chmod +x "$recording_adapter"
 
-plugin_present='{"installed":[{"pluginId":"superpowers@superpowers-wrapper","name":"superpowers","marketplaceName":"superpowers-wrapper"}],"available":[]}'
+plugin_present='{"installed":[{"pluginId":"superpowers@superpowers-manager","name":"superpowers","marketplaceName":"superpowers-manager"}],"available":[]}'
 plugin_absent='{"installed":[],"available":[]}'
-marketplace_present='{"marketplaces":[{"name":"openai-curated","root":"/x"},{"name":"superpowers-wrapper","root":"/y"}]}'
+marketplace_present='{"marketplaces":[{"name":"openai-curated","root":"/x"},{"name":"superpowers-manager","root":"/y"}]}'
 marketplace_absent='{"marketplaces":[{"name":"openai-curated","root":"/x"}]}'
+legacy_plugin_present='{"installed":[{"pluginId":"superpowers@superpowers-wrapper","name":"superpowers","marketplaceName":"superpowers-wrapper"}],"available":[]}'
+legacy_marketplace_present='{"marketplaces":[{"name":"superpowers-wrapper","root":"/legacy"}]}'
+both_plugins_present='{"installed":[{"pluginId":"superpowers@superpowers-manager","name":"superpowers","marketplaceName":"superpowers-manager"},{"pluginId":"superpowers@superpowers-wrapper","name":"superpowers","marketplaceName":"superpowers-wrapper"}],"available":[]}'
+both_marketplaces_present='{"marketplaces":[{"name":"superpowers-manager","root":"/manager"},{"name":"superpowers-wrapper","root":"/legacy"}]}'
 
 reset() {
   rm -f "$state/plugin_list.rc" "$state/marketplace_list.rc" "$state/remove_noop" \
@@ -163,6 +189,33 @@ if grep -Fq "error: invalid adapter response:" "$state/out"; then
   exit 1
 fi
 
+# --- Scenario 0c: legacy-only state is never mutated and leaves guidance ---
+reset
+printf '%s\n' "$legacy_plugin_present" > "$state/plugin_list.json"
+printf '%s\n' "$legacy_marketplace_present" > "$state/marketplace_list.json"
+out=$(run_uninstall)
+assert_no_removes
+grep -Fxq "uninstall --plugin-present false --marketplace-present false" "$adapter_log"
+printf '%s\n' "$out" | grep -Fxq 'Legacy superpowers-wrapper Codex state remains installed.'
+printf '%s\n' "$out" | grep -Fxq 'Run: npx superpowers-wrapper@0.1.1 uninstall'
+
+# --- Scenario 0d: mixed state removes manager resources only and reports the
+# untouched legacy residue ---
+reset
+printf '%s\n' "$both_plugins_present" > "$state/plugin_list.json"
+printf '%s\n' "$both_marketplaces_present" > "$state/marketplace_list.json"
+out=$(run_uninstall)
+grep -Fq 'plugin remove superpowers@superpowers-manager' "$log"
+grep -Fq 'plugin marketplace remove superpowers-manager' "$log"
+if grep -Fq 'superpowers@superpowers-wrapper' "$log" ||
+   grep -Fq 'plugin marketplace remove superpowers-wrapper' "$log"; then
+  echo "uninstall must not mutate legacy resources" >&2
+  cat "$log" >&2
+  exit 1
+fi
+printf '%s\n' "$out" | grep -Fxq 'Legacy superpowers-wrapper Codex state remains installed.'
+printf '%s\n' "$out" | grep -Fxq 'Run: npx superpowers-wrapper@0.1.1 uninstall'
+
 # --- Scenario 1: both present -> both removed, plugin before marketplace,
 #     openai-curated never named ---
 reset
@@ -179,10 +232,10 @@ uninstall_line=$(line_of "uninstall --plugin-present true --marketplace-present 
 second_inspect_line=$(grep -Fn "inspect --view ownership" "$adapter_log" | tail -n1 | cut -d: -f1)
 [ "$first_inspect_line" -lt "$uninstall_line" ] || { echo "ownership inspect must precede adapter uninstall" >&2; exit 1; }
 [ "$uninstall_line" -lt "$second_inspect_line" ] || { echo "ownership re-inspect must follow adapter uninstall" >&2; exit 1; }
-grep -Fq "plugin remove superpowers@superpowers-wrapper" "$log"
-grep -Fq "plugin marketplace remove superpowers-wrapper" "$log"
-rm_line=$(line_of "plugin remove superpowers@superpowers-wrapper" "$log")
-mp_line=$(line_of "plugin marketplace remove superpowers-wrapper" "$log")
+grep -Fq "plugin remove superpowers@superpowers-manager" "$log"
+grep -Fq "plugin marketplace remove superpowers-manager" "$log"
+rm_line=$(line_of "plugin remove superpowers@superpowers-manager" "$log")
+mp_line=$(line_of "plugin marketplace remove superpowers-manager" "$log")
 [ "$rm_line" -lt "$mp_line" ] || { echo "plugin remove must precede marketplace remove" >&2; exit 1; }
 if grep -Fq "openai-curated" "$log"; then
   echo "uninstall must never name openai-curated" >&2
@@ -198,12 +251,12 @@ reset
 printf '%s\n' "$plugin_absent" > "$state/plugin_list.json"
 printf '%s\n' "$marketplace_present" > "$state/marketplace_list.json"
 out=$(run_uninstall)
-if grep -Fq "plugin remove superpowers@superpowers-wrapper" "$log"; then
+if grep -Fq "plugin remove superpowers@superpowers-manager" "$log"; then
   echo "must not remove an absent plugin" >&2
   exit 1
 fi
 grep -Fxq "uninstall --plugin-present false --marketplace-present true" "$adapter_log"
-grep -Fq "plugin marketplace remove superpowers-wrapper" "$log"
+grep -Fq "plugin marketplace remove superpowers-manager" "$log"
 printf '%s\n' "$out" | grep -Fq "plugin not installed; skipping"
 
 # --- Scenario 3: both absent -> no removes, idempotent success, both skips ---
@@ -310,7 +363,7 @@ if [ "$(grep -Fc "inspect --view ownership" "$adapter_log")" -ne 2 ]; then
   exit 1
 fi
 # the removal was attempted...
-grep -Fq "plugin remove superpowers@superpowers-wrapper" "$log"
+grep -Fq "plugin remove superpowers@superpowers-manager" "$log"
 # ...but the plugin is still present on re-query, so uninstall must NOT succeed
 assert_output_contains "still installed"
 
@@ -322,7 +375,7 @@ printf '%s\n' "$marketplace_present" > "$state/marketplace_list.json"
 : > "$state/remove_plugin_missing_installed"
 expect_fail
 grep -Fxq "uninstall --plugin-present true --marketplace-present true" "$adapter_log"
-grep -Fq "plugin remove superpowers@superpowers-wrapper" "$log"
+grep -Fq "plugin remove superpowers@superpowers-manager" "$log"
 assert_output_contains "cannot parse output of"
 if grep -Fq "uninstall complete" "$state/out"; then
   echo "must not report success when verify-after sees schema drift" >&2
@@ -339,8 +392,8 @@ printf '%s\n' "$marketplace_present" > "$state/marketplace_list.json"
 : > "$state/remove_marketplace_fail"
 expect_fail
 grep -Fxq "uninstall --plugin-present true --marketplace-present true" "$adapter_log"
-grep -Fq "plugin remove superpowers@superpowers-wrapper" "$log"
-grep -Fq "plugin marketplace remove superpowers-wrapper" "$log"
+grep -Fq "plugin remove superpowers@superpowers-manager" "$log"
+grep -Fq "plugin marketplace remove superpowers-manager" "$log"
 if grep -Fq "uninstall complete" "$state/out"; then
   echo "core must not print final success when marketplace removal fails" >&2
   cat "$state/out" >&2
@@ -352,7 +405,7 @@ if grep -Fq "error: invalid adapter response:" "$state/out"; then
   exit 1
 fi
 grep -Fq "marketplace remove exploded" "$state/out"
-grep -Fq "error: codex plugin marketplace remove failed for superpowers-wrapper" "$state/out"
+grep -Fq "error: codex plugin marketplace remove failed for superpowers-manager" "$state/out"
 if grep -Fq "openai-curated" "$log"; then
   echo "marketplace failure must not mutate unrelated providers" >&2
   cat "$log" >&2
