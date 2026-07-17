@@ -58,6 +58,20 @@ assert_line() {
   fi
 }
 
+assert_before() {
+  path="$1"
+  first="$2"
+  second="$3"
+  if ! awk -v first="$first" -v second="$second" '
+    index($0, first) && !first_line { first_line = NR }
+    index($0, second) && !second_line { second_line = NR }
+    END { exit !(first_line && second_line && first_line < second_line) }
+  ' "$root/$path"; then
+    echo "text out of order in $path: $first before $second" >&2
+    exit 1
+  fi
+}
+
 assert_file ".gitignore"
 assert_file "config/upstream-ref"
 assert_file ".agents/plugins/marketplace.json"
@@ -118,6 +132,20 @@ assert_contains "$release_runbook" "87783582029"
 assert_contains "$release_runbook" 'npm publish "dist/superpowers-manager-0.1.3.tgz"'
 assert_contains "$release_runbook" 'npm publish "./dist/superpowers-manager-0.1.3.tgz"'
 assert_contains "$release_runbook" 'TARBALL: ./dist/${{ needs.build.outputs.filename }}'
+trusted_gate="## 11. Recovery Gate R4: configure permanent trusted publishing"
+token_gate="## 12. Recovery Gate R5: disallow token publishing"
+deprecation_gate="## 13. Recovery Gate R6: deprecate the exact old package"
+assert_line "$release_runbook" "$trusted_gate"
+assert_line "$release_runbook" "$token_gate"
+assert_line "$release_runbook" "$deprecation_gate"
+assert_contains "$release_runbook" 'R4 authorizes only permanent trusted-publisher configuration for'
+assert_contains "$release_runbook" 'R5 authorizes only the package token-disallow policy for'
+assert_contains "$release_runbook" 'R6 authorizes only package-wide deprecation metadata for'
+assert_contains "$release_runbook" 'After separate explicit R4 approval only'
+assert_contains "$release_runbook" 'After separate explicit R5 approval only'
+assert_contains "$release_runbook" 'After separate explicit R6 approval only'
+assert_before "$release_runbook" "$trusted_gate" "$token_gate"
+assert_before "$release_runbook" "$token_gate" "$deprecation_gate"
 assert_contains "$release_runbook" 'npm_root=$(mktemp -d)'
 assert_contains "$release_runbook" 'NPM_CONFIG_PREFIX="$npm_prefix"'
 assert_contains "$release_runbook" 'NPM_CONFIG_CACHE="$npm_cache"'

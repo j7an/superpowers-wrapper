@@ -9,7 +9,7 @@ does not authorize an external mutation.
 
 Stop at every **Recovery Gate** and obtain explicit approval for only the
 mutation named by that gate. Approvals are non-transitive: approval for R1 does
-not authorize R2, approval for R2 does not authorize R3, and so on through R5.
+not authorize R2, approval for R2 does not authorize R3, and so on through R6.
 No approval authorizes a different package, version, tag, workflow run,
 environment, credential, repository, or npm metadata change.
 
@@ -1034,9 +1034,9 @@ fails, do not create or restore token-based publishing.
 
 **STOP — EXTERNAL MUTATION GATE R4**
 
-R4 authorizes only permanent trust configuration for `superpowers-manager` and
-the package's token-disallow policy. It does not authorize changes to another
-package, deprecation, or a release.
+R4 authorizes only permanent trusted-publisher configuration for
+`superpowers-manager`. It does not authorize the package token-disallow policy,
+changes to another package, deprecation, or a release.
 
 Recheck current official npm trusted-publishing documentation immediately
 before approval. Stop if the required claims or workflow configuration differ
@@ -1050,10 +1050,9 @@ Environment: npm
 Allowed action: npm publish
 ```
 
-Present the exact package, repository, workflow, environment, and policy
-changes. After separate explicit R4 approval only, configure the trusted publisher
-interactively with 2FA, require 2FA, and disallow token publishing while
-retaining OIDC.
+Present the exact package, repository, workflow, and environment.
+After separate explicit R4 approval only, configure the trusted publisher
+interactively with 2FA. Do not change the token-disallow policy under R4.
 
 Verify the long-lived `npm` GitHub environment and its required reviewers
 without printing secrets:
@@ -1063,13 +1062,34 @@ gh api repos/j7an/superpowers-manager/environments/npm
 ```
 
 If trust setup fails, leave verified `0.1.4` published, keep the bootstrap token
-revoked, and block every later release until trust is repaired interactively.
+revoked, and stop before R5. Block every later release until trust is repaired
+interactively.
 
-## 12. Recovery Gate R5: deprecate the exact old package
+## 12. Recovery Gate R5: disallow token publishing
 
 **STOP — EXTERNAL MUTATION GATE R5**
 
-R5 authorizes only package-wide deprecation metadata for
+R5 authorizes only the package token-disallow policy for
+`superpowers-manager`. It does not authorize trusted-publisher changes,
+changes to another package, deprecation, or a release.
+
+Verify read-only that the R4 trusted publisher exactly matches the package,
+repository, workflow, and `npm` environment recorded above. Recheck current
+official npm documentation for the token-disallow control. Stop if OIDC trusted
+publishing would not remain available after token publishing is disabled.
+
+Present only the exact token-policy mutation and its consequence.
+After separate explicit R5 approval only, require 2FA and disallow token
+publishing while retaining OIDC. Verify that token publishing is disabled and the exact trusted
+publisher remains active. If policy setup fails, keep verified `0.1.4`
+published and the bootstrap token revoked, and block every later release until
+the policy is repaired interactively.
+
+## 13. Recovery Gate R6: deprecate the exact old package
+
+**STOP — EXTERNAL MUTATION GATE R6**
+
+R6 authorizes only package-wide deprecation metadata for
 `superpowers-wrapper`. It does not authorize publishing a bridge, unpublishing,
 transferring, deleting, or changing any version.
 
@@ -1088,7 +1108,7 @@ Present this exact message:
 DEPRECATED: Renamed to superpowers-manager; this package is frozen. Existing installs: run npx superpowers-wrapper@0.1.1 uninstall, then npx superpowers-manager install.
 ```
 
-After separate explicit R5 approval only, deprecate interactively with 2FA:
+After separate explicit R6 approval only, deprecate interactively with 2FA:
 
 ```sh
 npm deprecate 'superpowers-wrapper@*' \
@@ -1100,7 +1120,7 @@ a clean install emits the warning, and the npm package page displays it.
 Recheck search after npm's normal indexing delay. Search absence is a
 verification target, never a reason to unpublish.
 
-## 13. Failure and further-recovery rules
+## 14. Failure and further-recovery rules
 
 - If the `v0.1.4` build fails before publication, preserve its tag and run,
   revoke the reused token and remove temporary credentials under a separately approved cleanup,
@@ -1117,7 +1137,7 @@ verification target, never a reason to unpublish.
   operation after separate approval. Never unpublish.
 - Any dist-tag correction, release-asset replacement, higher-version recovery,
   tag-ruleset change, or main-line release requires a separate evidence packet
-  and explicit approval. No R1-R5 approval carries forward to that work.
+  and explicit approval. No R1-R6 approval carries forward to that work.
 - Never publish another `superpowers-wrapper` version, create a replacement
   old-name repository, weaken branch protection, remove another provider, or
   import the bootstrap path into modular `main`.
