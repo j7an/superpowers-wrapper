@@ -35,17 +35,94 @@ with open(package_path, encoding="utf-8") as fh:
 with open(release_doc_path, encoding="utf-8") as fh:
     release_doc = fh.read()
 
-match = re.search(
-    r"`superpowers-manager@(\d+\.\d+\.\d+)` and its GitHub Release",
-    release_doc,
+stable_semver = re.compile(
+    r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$"
 )
-if match is None:
-    raise SystemExit("RELEASING.md does not identify the published Manager baseline")
-if package.get("version") != match.group(1):
-    raise SystemExit(
-        "package.json version does not match the documented published Manager "
-        f"baseline: {package.get('version')!r} != {match.group(1)!r}"
+
+
+def parse_stable_semver(value, label):
+    if not isinstance(value, str):
+        raise ValueError(f"{label} is not a stable semver string: {value!r}")
+    match = stable_semver.fullmatch(value)
+    if match is None:
+        raise ValueError(f"{label} is not stable semver: {value!r}")
+    return tuple(int(part) for part in match.groups())
+
+
+def assert_source_not_behind(source, baseline):
+    source_version = parse_stable_semver(source, "package.json version")
+    baseline_version = parse_stable_semver(
+        baseline, "documented published Manager baseline"
     )
+    if source_version < baseline_version:
+        raise ValueError(
+            "package.json version is behind the documented published Manager "
+            f"baseline: {source!r} < {baseline!r}"
+        )
+
+
+baseline_pattern = re.compile(
+    r"^Published Manager baseline for version monotonicity: "
+    r"`superpowers-manager@([^`\n]+)`\.$",
+    re.MULTILINE,
+)
+
+
+def extract_published_baseline(document):
+    matches = baseline_pattern.findall(document)
+    if len(matches) != 1:
+        raise ValueError(
+            "RELEASING.md must contain exactly one published Manager baseline "
+            f"marker, found {len(matches)}"
+        )
+    return matches[0]
+
+
+version_cases = (
+    ("1.2.3", "1.2.3", True),
+    ("1.2.4", "1.2.3", True),
+    ("1.2.2", "1.2.3", False),
+)
+for source, baseline, expected_ok in version_cases:
+    try:
+        assert_source_not_behind(source, baseline)
+    except ValueError:
+        actual_ok = False
+    else:
+        actual_ok = True
+    if actual_ok != expected_ok:
+        raise SystemExit(
+            "internal version-contract regression: "
+            f"source={source!r}, baseline={baseline!r}, "
+            f"expected_ok={expected_ok!r}"
+        )
+
+try:
+    parse_stable_semver("1.2.3-beta.1", "test version")
+except ValueError:
+    pass
+else:
+    raise SystemExit("internal version-contract regression: prerelease accepted")
+
+historical_release_text = """\
+`superpowers-manager@1.0.0` and its GitHub Release were recovered.
+Published Manager baseline for version monotonicity: `superpowers-manager@1.2.3`.
+"""
+if extract_published_baseline(historical_release_text) != "1.2.3":
+    raise SystemExit(
+        "internal version-contract regression: historical release overrode marker"
+    )
+
+if package.get("name") != "superpowers-manager":
+    raise SystemExit(
+        f"unexpected package name in {package_path}: {package.get('name')!r}"
+    )
+
+try:
+    published_baseline = extract_published_baseline(release_doc)
+    assert_source_not_behind(package.get("version"), published_baseline)
+except ValueError as exc:
+    raise SystemExit(str(exc)) from exc
 PY
 
 echo "test_tag_release_workflow: OK"
