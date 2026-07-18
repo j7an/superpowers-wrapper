@@ -8,15 +8,42 @@ set -eu
 root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 json_file="$1"
 
-python3 - "$json_file" "$root/tests/expected_tarball_contents.txt" <<'PY'
+python3 - "$json_file" "$root/package.json" "$root/tests/expected_tarball_contents.txt" <<'PY'
 import json, sys
 
 with open(sys.argv[1], encoding="utf-8") as f:
     report = json.load(f)
 if not isinstance(report, list) or len(report) != 1:
     sys.exit("unexpected npm pack --json shape: expected a one-element array")
-actual = sorted(entry["path"] for entry in report[0]["files"])
 with open(sys.argv[2], encoding="utf-8") as f:
+    package = json.load(f)
+if package.get("name") != "superpowers-manager":
+    sys.exit(
+        "root package name mismatch: "
+        f"expected 'superpowers-manager', got {package.get('name')!r}"
+    )
+version = package.get("version")
+if not isinstance(version, str) or not version:
+    sys.exit(f"root package version is missing or invalid: {version!r}")
+packed = report[0]
+if packed.get("name") != package["name"]:
+    sys.exit(
+        "pack report name mismatch: "
+        f"expected {package['name']!r}, got {packed.get('name')!r}"
+    )
+if packed.get("version") != version:
+    sys.exit(
+        "pack report version mismatch: "
+        f"expected {version!r}, got {packed.get('version')!r}"
+    )
+expected_id = f"superpowers-manager@{version}"
+if packed.get("id") != expected_id:
+    sys.exit(
+        "pack report id mismatch: "
+        f"expected {expected_id!r}, got {packed.get('id')!r}"
+    )
+actual = sorted(entry["path"] for entry in packed["files"])
+with open(sys.argv[3], encoding="utf-8") as f:
     expected = sorted(
         line.strip() for line in f
         if line.strip() and not line.startswith("#")
