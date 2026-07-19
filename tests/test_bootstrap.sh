@@ -59,6 +59,8 @@ assert_contains "README.md" "superpowers-manager pin v6.1.1"
 assert_contains "README.md" "superpowers-manager track-latest"
 assert_contains "README.md" "superpowers-manager unpin"
 assert_contains "README.md" "selection commands save intent only"
+assert_contains "README.md" '`SUPERPOWERS_REF` is an invocation-only override'
+assert_contains "README.md" "SUPERPOWERS_REF=feature/foo npx superpowers-manager probe"
 assert_contains "tests/expected_tarball_contents.txt" "scripts/core/selection-state.py"
 assert_contains "tests/expected_tarball_contents.txt" "scripts/core/selection.sh"
 assert_contains "tests/expected_tarball_contents.txt" "scripts/pin"

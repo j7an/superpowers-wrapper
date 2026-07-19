@@ -182,6 +182,14 @@ independent:
 - Source: `SUPERPOWERS_UPSTREAM_URL`, then saved source, then the official
   `https://github.com/obra/superpowers` source.
 
+`SUPERPOWERS_REF` is an invocation-only override and is not persisted. Unlike
+an exact saved pin, it accepts stable tags, full commit SHAs, branches, and
+other resolvable upstream refs for that invocation:
+
+```sh
+SUPERPOWERS_REF=feature/foo npx superpowers-manager probe
+```
+
 `pin` and `track-latest` bind the current `SUPERPOWERS_UPSTREAM_URL`, or the
 official source when that variable is unset, to the saved intent. An invocation
 may override only the ref or only the source; `probe` exposes
