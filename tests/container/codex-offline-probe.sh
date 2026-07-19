@@ -11,6 +11,7 @@ state="$root/state"
 survivor="$root/unrelated-provider"
 
 cp -R /workspace "$package"
+chmod +x "$package/bin/superpowers-manager.js"
 mkdir -p "$upstream/skills/probe" "$upstream/.codex-plugin" "$state" \
   "$survivor/.agents/plugins" "$survivor/plugins/unrelated/skills/probe" \
   "$survivor/plugins/unrelated/.codex-plugin"

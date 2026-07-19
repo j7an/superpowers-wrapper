@@ -218,6 +218,7 @@ def validate_probe!(probe)
   end
 
   lifecycle = [
+    'chmod +x "$package/bin/superpowers-manager.js"',
     'commit_a=$(git -C "$upstream" rev-parse HEAD)',
     'short_a=$(printf \'%s\' "$commit_a" | cut -c 1-7)',
     'version_a="1.0.0+manager.$short_a"',
