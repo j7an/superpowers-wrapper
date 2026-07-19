@@ -166,7 +166,17 @@ run_probe() {
 
 run_probe_with_saved_selection() {
   config_dir="$1"
-  shift
+  output_mode="$2"
+  shift 2
+  set -- "$@" /bin/sh "$pkg/scripts/probe"
+  case "$output_mode" in
+    human) ;;
+    porcelain) set -- "$@" --porcelain ;;
+    *)
+      echo "unknown probe output mode: $output_mode" >&2
+      return 2
+      ;;
+  esac
   env -u SUPERPOWERS_REF -u SUPERPOWERS_UPSTREAM_URL \
     PATH="$tool_path" \
     TMPDIR="$probe_tmp" \
@@ -179,27 +189,7 @@ run_probe_with_saved_selection() {
     SPW_ADAPTER="$recording_adapter" \
     SPW_TEST_GIT_LOG="$git_log" \
     SPW_TEST_REAL_GIT="$real_git" \
-    "$@" \
-    /bin/sh "$pkg/scripts/probe" --porcelain
-}
-
-run_human_probe_with_saved_selection() {
-  config_dir="$1"
-  shift
-  env -u SUPERPOWERS_REF -u SUPERPOWERS_UPSTREAM_URL \
-    PATH="$tool_path" \
-    TMPDIR="$probe_tmp" \
-    SUPERPOWERS_CONFIG_DIR="$config_dir" \
-    SUPERPOWERS_CODEX="$probe_codex" \
-    SUPERPOWERS_INSTALLED_SEARCH_ROOT="$tmpdir/codex-home" \
-    SPW_PROBE_PLUGIN_JSON="$probe_plugin_json" \
-    SPW_PROBE_FINGERPRINT_JSON="$probe_fingerprint_json" \
-    SPW_PROBE_MARKETPLACE_JSON="$probe_marketplace_json" \
-    SPW_ADAPTER="$recording_adapter" \
-    SPW_TEST_GIT_LOG="$git_log" \
-    SPW_TEST_REAL_GIT="$real_git" \
-    "$@" \
-    /bin/sh "$pkg/scripts/probe"
+    "$@"
 }
 
 assert_probe_tmp_empty() {
@@ -262,7 +252,7 @@ offline_source="$tmpdir/upstream-offline"
 mv "$upstream" "$offline_source"
 : > "$adapter_log"
 : > "$git_log"
-output=$(run_probe_with_saved_selection "$saved_config")
+output=$(run_probe_with_saved_selection "$saved_config" porcelain)
 assert_probe_porcelain "$desired_short" "current" neither "$output"
 printf '%s\n' "$output" | grep -Fxq 'selection_origin=user-config'
 printf '%s\n' "$output" | grep -Fxq 'selection_mode=pinned'
@@ -279,15 +269,16 @@ assert_probe_tmp_empty
 
 : > "$adapter_log"
 : > "$git_log"
-output=$(run_probe_with_saved_selection "$saved_config" SUPERPOWERS_REF="$desired_commit")
+output=$(run_probe_with_saved_selection \
+  "$saved_config" porcelain SUPERPOWERS_REF="$desired_commit")
 printf '%s\n' "$output" | grep -Fxq 'selection_origin=environment'
 printf '%s\n' "$output" | grep -Fxq 'upstream_source_origin=user-config'
 printf '%s\n' "$output" | grep -Fxq 'saved_mode=pinned'
 printf '%s\n' "$output" | grep -Fxq "saved_commit=$desired_commit"
 test ! -s "$git_log"
 
-human_output=$(run_human_probe_with_saved_selection \
-  "$saved_config" SUPERPOWERS_REF="$desired_commit")
+human_output=$(run_probe_with_saved_selection \
+  "$saved_config" human SUPERPOWERS_REF="$desired_commit")
 printf '%s\n' "$human_output" | grep -Fxq 'selection origin: environment'
 printf '%s\n' "$human_output" | grep -Fxq 'selection mode: override'
 printf '%s\n' "$human_output" | grep -Fxq 'upstream source origin: user-config'
@@ -328,7 +319,7 @@ assert_preflight_failure() {
   shift 2
   : > "$adapter_log"
   : > "$git_log"
-  if run_probe_with_saved_selection "$config_dir" "$@" \
+  if run_probe_with_saved_selection "$config_dir" porcelain "$@" \
       >"$tmpdir/preflight.out" 2>"$tmpdir/preflight.err"; then
     echo "probe unexpectedly accepted invalid selection preflight" >&2
     exit 1
