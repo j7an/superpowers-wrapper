@@ -80,6 +80,34 @@ SUPERPOWERS_CONFIG_DIR="$config" SUPERPOWERS_UPSTREAM_URL="$upstream" \
   sh "$root/scripts/pin" v1.0.0 extra >"$tmpdir/out" 2>&1 || rc=$?
 test "$rc" -eq 2
 
+# A malformed single argument is classified before state, source, or Git access.
+early_guard_config="$tmpdir/early-guard-config"
+mkdir "$early_guard_config"
+printf '%s\n' '{bad json' > "$early_guard_config/selection.json"
+early_guard_bin="$tmpdir/early-guard-bin"
+mkdir "$early_guard_bin"
+real_git=$(command -v git)
+cat > "$early_guard_bin/git" <<EOF
+#!/bin/sh
+printf '%s\n' "\$*" >> "$tmpdir/early-git.log"
+exec "$real_git" "\$@"
+EOF
+chmod +x "$early_guard_bin/git"
+bad_tag_cr=$(printf 'v1.0.0\r')
+bad_tag_lf=$(printf 'v1.0.0\ninvalid')
+bad_commit_lf=$(printf '%s\ninvalid' "$head_commit")
+for ref in "$bad_tag_cr" "$bad_tag_lf" "$bad_commit_lf"; do
+  rc=0
+  PATH="$early_guard_bin:$PATH" SUPERPOWERS_CONFIG_DIR="$early_guard_config" \
+    SUPERPOWERS_UPSTREAM_URL='https://token@example.invalid/repo' \
+    sh "$root/scripts/pin" "$ref" >"$tmpdir/out" 2>&1 || rc=$?
+  test "$rc" -eq 2
+  grep -Fq 'pin REF must be an exact v-prefixed SemVer tag or full 40-hex commit' \
+    "$tmpdir/out"
+  test ! -e "$tmpdir/early-git.log"
+  test "$(cat "$early_guard_config/selection.json")" = '{bad json'
+done
+
 # Lightweight and annotated tags use only the exact tag namespace, with peeling.
 run_pin v1.0.0 >"$tmpdir/out"
 grep -Fxq "pinned upstream selection to v1.0.0 at $v1_commit" "$tmpdir/out"
@@ -102,6 +130,31 @@ test "$(json_get saved_requested_ref)" = "$head_commit"
 test "$(json_get saved_resolved_ref)" = "$head_commit"
 test "$(json_get saved_commit)" = "$head_commit"
 assert_path_empty "$raw_tmp"
+
+# Raw verification retains the caller's context for relative and dash-prefixed
+# local sources while using an option terminator before the repository argument.
+relative_config="$tmpdir/relative-config"
+(
+  cd "$tmpdir"
+  SUPERPOWERS_CONFIG_DIR="$relative_config" SUPERPOWERS_UPSTREAM_URL=upstream \
+    sh "$root/scripts/pin" "$head_commit" >"$tmpdir/out"
+)
+python3 -S "$state_helper" read \
+  --path "$relative_config/selection.json" --output "$normalized"
+test "$(json_get saved_source)" = upstream
+test "$(json_get saved_commit)" = "$head_commit"
+
+ln -s upstream "$tmpdir/-upstream"
+dash_config="$tmpdir/dash-config"
+(
+  cd "$tmpdir"
+  SUPERPOWERS_CONFIG_DIR="$dash_config" SUPERPOWERS_UPSTREAM_URL=-upstream \
+    sh "$root/scripts/pin" "$head_commit" >"$tmpdir/out"
+)
+python3 -S "$state_helper" read \
+  --path "$dash_config/selection.json" --output "$normalized"
+test "$(json_get saved_source)" = -upstream
+test "$(json_get saved_commit)" = "$head_commit"
 
 for ref in 1.2.3 v1.2 v1.2.3+build.4 latest-release main "${head_commit%????????}"; do
   assert_pin_usage_failure "$ref"
@@ -246,6 +299,40 @@ fi
 test "$(cat "$raw_tmp/sibling")" = keep
 test "$(find "$raw_tmp" -mindepth 1 -maxdepth 1 -print | wc -l | tr -d ' ')" -eq 1
 assert_state_unchanged "$before"
+
+# The writer revalidates state after Git verification and preserves a conflict
+# introduced after the initial read.
+race_config="$tmpdir/race-config"
+race_git_bin="$tmpdir/race-git-bin"
+mkdir "$race_git_bin"
+cat > "$race_git_bin/git" <<EOF
+#!/bin/sh
+case " \$* " in
+  *' ls-remote '*)
+    case "\${SPW_TEST_CONFLICT:-}" in
+      malformed) printf '%s\n' '{changed during verification' > "$race_config/selection.json" ;;
+      newer) printf '%s\n' '{"schema_version":2,"mode":"track-latest","source":"https://example.invalid/repo"}' > "$race_config/selection.json" ;;
+    esac
+    ;;
+esac
+exec "$real_git" "\$@"
+EOF
+chmod +x "$race_git_bin/git"
+
+for conflict in malformed newer; do
+  rm -rf "$race_config"
+  mkdir "$race_config"
+  rc=0
+  PATH="$race_git_bin:$PATH" SPW_TEST_CONFLICT="$conflict" \
+    SUPERPOWERS_CONFIG_DIR="$race_config" SUPERPOWERS_UPSTREAM_URL="$upstream" \
+    sh "$root/scripts/pin" v1.0.0 >"$tmpdir/out" 2>&1 || rc=$?
+  test "$rc" -eq 1
+  case "$conflict" in
+    malformed) conflict_expected='{changed during verification' ;;
+    newer) conflict_expected='{"schema_version":2,"mode":"track-latest","source":"https://example.invalid/repo"}' ;;
+  esac
+  test "$(cat "$race_config/selection.json")" = "$conflict_expected"
+done
 
 # Existing malformed and newer state fail closed before any Git process runs.
 git_log="$tmpdir/git.log"

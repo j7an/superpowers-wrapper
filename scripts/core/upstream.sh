@@ -25,8 +25,19 @@ spw_is_semver_base() {
 spw_is_pinnable_tag() {
   ref="$1"
   case "$ref" in
+    *'
+'*|*"$(printf '\r')"*) return 1 ;;
     v*) spw_is_semver_base "${ref#v}" ;;
     *) return 1 ;;
+  esac
+}
+
+spw_is_full_commit() {
+  ref="$1"
+  [ "${#ref}" -eq 40 ] || return 1
+  case "$ref" in
+    *[!0-9A-Fa-f]*) return 1 ;;
+    *) return 0 ;;
   esac
 }
 
@@ -51,6 +62,11 @@ spw_verify_raw_commit() (
   commit=$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]')
   workspace="$3"
   source_display=$(spw_display_source "$source")
+  case "$source" in
+    ./*|../*) fetch_source="$(pwd -P)/$source" ;;
+    /*|*://*|*:*|~*) fetch_source="$source" ;;
+    *) fetch_source="$(pwd -P)/$source" ;;
+  esac
 
   if ! verify_workspace=$(mktemp -d "$workspace/superpowers-manager.commit.XXXXXX"); then
     spw_die "cannot create raw-commit verification workspace under $workspace"
@@ -69,7 +85,7 @@ spw_verify_raw_commit() (
   if ! init_output=$(git init "$verify_workspace" 2>&1); then
     spw_die "cannot initialize raw-commit verification workspace: $init_output"
   fi
-  if fetch_output=$(git -C "$verify_workspace" fetch --no-tags "$source" "$commit" 2>&1); then
+  if fetch_output=$(git -C "$verify_workspace" fetch --no-tags -- "$fetch_source" "$commit" 2>&1); then
     :
   else
     case "$fetch_output" in

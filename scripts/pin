@@ -9,6 +9,14 @@ root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 [ "$#" -eq 1 ] || spw_usage_error 'usage: superpowers-manager pin REF'
 requested_ref="$1"
 
+if spw_is_pinnable_tag "$requested_ref"; then
+  requested_kind=tag
+elif spw_is_full_commit "$requested_ref"; then
+  requested_kind=raw-commit
+else
+  spw_usage_error 'pin REF must be an exact v-prefixed SemVer tag or full 40-hex commit'
+fi
+
 spw_require_command python3
 state_path=$(spw_selection_state_path)
 tmp_parent="${TMPDIR:-/tmp}"
@@ -44,17 +52,15 @@ else
   spw_die "$source_error"
 fi
 
-if spw_is_pinnable_tag "$requested_ref"; then
+if [ "$requested_kind" = tag ]; then
   spw_require_command git
   commit=$(spw_resolve_exact_tag "$source" "$requested_ref")
   resolved_ref="$requested_ref"
-elif printf '%s' "$requested_ref" | grep -Eq '^[0-9a-fA-F]{40}$'; then
+else
   spw_require_command git
   requested_ref=$(printf '%s' "$requested_ref" | tr '[:upper:]' '[:lower:]')
   resolved_ref="$requested_ref"
   commit=$(spw_verify_raw_commit "$source" "$requested_ref" "$pin_workspace")
-else
-  spw_usage_error 'pin REF must be an exact v-prefixed SemVer tag or full 40-hex commit'
 fi
 
 if write_error=$(python3 -S "$root/scripts/core/selection-state.py" write-pinned \
