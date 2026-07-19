@@ -27,6 +27,7 @@ git -C "$upstream" add file.txt
 git -C "$upstream" -c commit.gpgsign=false commit -m second >/dev/null
 head_commit=$(git -C "$upstream" rev-parse HEAD)
 git -C "$upstream" -c tag.gpgsign=false tag -a v1.1.0-rc.1 -m candidate
+annotated_tag_object=$(git -C "$upstream" rev-parse 'v1.1.0-rc.1^{tag}')
 git -C "$upstream" branch v9.9.9
 blob_commit=$(git -C "$upstream" rev-parse HEAD:file.txt)
 
@@ -222,6 +223,16 @@ grep -Fq 'requested object is not a commit' "$tmpdir/out"
 assert_state_unchanged "$before"
 assert_path_empty "$raw_tmp"
 
+raw_tmp="$tmpdir/raw-tag-object"
+mkdir "$raw_tmp"
+rc=0
+TMPDIR="$raw_tmp" SUPERPOWERS_CONFIG_DIR="$config" SUPERPOWERS_UPSTREAM_URL="$upstream" \
+  sh "$root/scripts/pin" "$annotated_tag_object" >"$tmpdir/out" 2>&1 || rc=$?
+test "$rc" -eq 1
+grep -Fq 'requested object is not a commit' "$tmpdir/out"
+assert_state_unchanged "$before"
+assert_path_empty "$raw_tmp"
+
 # Other fetch failures name only a safe source display and still clean up.
 real_git=$(command -v git)
 fakebin="$tmpdir/fetch-failure-bin"
@@ -404,10 +415,11 @@ test ! -e "$git_log"
 track_config="$tmpdir/track-config"
 nogit_bin="$tmpdir/no-git-bin"
 mkdir "$nogit_bin"
+real_python3=$(python3 -c 'import os, sys; print(os.path.realpath(sys.executable))')
 ln -s "$(command -v dirname)" "$nogit_bin/dirname"
 ln -s "$(command -v mktemp)" "$nogit_bin/mktemp"
 ln -s "$(command -v rm)" "$nogit_bin/rm"
-ln -s "$(command -v python3)" "$nogit_bin/python3"
+ln -s "$real_python3" "$nogit_bin/python3"
 PATH="$nogit_bin" TMPDIR="$tmpdir" SUPERPOWERS_CONFIG_DIR="$track_config" \
   SUPERPOWERS_UPSTREAM_URL="$upstream" /bin/sh "$root/scripts/track-latest" \
   >"$tmpdir/out"

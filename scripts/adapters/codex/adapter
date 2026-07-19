@@ -542,6 +542,9 @@ spw_codex_inspect() {
         "$messages_file"
       ;;
     update-control)
+      # Capability declaration for the fixed Codex local-package topology,
+      # backed by Layer-4 A/B evidence; revisit if topology or observed update
+      # behavior changes.
       spw_codex_success inspect \
         '{"view":"update-control","update_control":"managed"}' ""
       ;;

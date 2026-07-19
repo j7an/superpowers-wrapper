@@ -67,6 +67,7 @@ git -C "$repo" add file.txt
 git -C "$repo" -c commit.gpgsign=false commit -m "release" >/dev/null
 git -C "$repo" -c tag.gpgsign=false tag -a v1.2.3 -m "release"
 release_commit=$(git -C "$repo" rev-list -n1 v1.2.3)
+release_tag_object=$(git -C "$repo" rev-parse 'v1.2.3^{tag}')
 git -C "$repo" branch -M main
 printf 'branch\n' > "$repo/file.txt"
 git -C "$repo" add file.txt
@@ -103,6 +104,14 @@ if spw_fetch_exact_commit "$repo" "$blob_object" "$tmpdir/blob-cache" \
   exit 1
 fi
 grep -Fq "requested object is not a commit: $blob_object" "$tmpdir/blob-fetch.err"
+
+if spw_fetch_exact_commit "$repo" "$release_tag_object" "$tmpdir/tag-object-cache" \
+    >"$tmpdir/tag-object-fetch.out" 2>"$tmpdir/tag-object-fetch.err"; then
+  echo "exact object fetch unexpectedly accepted an annotated tag object" >&2
+  exit 1
+fi
+grep -Fq "requested object is not a commit: $release_tag_object" \
+  "$tmpdir/tag-object-fetch.err"
 
 branch_named_like_tag=$(spw_resolve_ref "$repo" "v9.9.9")
 test "$branch_named_like_tag" = "ref v9.9.9 $main_commit"

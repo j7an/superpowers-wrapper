@@ -10,7 +10,7 @@ spw_selection_config_dir() {
     return
   fi
 
-  if [ "${XDG_CONFIG_HOME+x}" = x ]; then
+  if [ -n "${XDG_CONFIG_HOME:-}" ]; then
     case "$XDG_CONFIG_HOME" in
       /*) printf '%s/superpowers-manager\n' "$XDG_CONFIG_HOME" ;;
       *) echo "error: XDG_CONFIG_HOME must be absolute" >&2; return 1 ;;

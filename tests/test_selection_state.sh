@@ -18,6 +18,7 @@ printf '%s\n' 'v1.2.3' > "$tmpdir/config-root/config/upstream-ref"
 
 test "$(SUPERPOWERS_CONFIG_DIR="$tmpdir/explicit" spw_selection_config_dir)" = "$tmpdir/explicit"
 test "$(XDG_CONFIG_HOME="$tmpdir/xdg" HOME="$tmpdir/home" spw_selection_config_dir)" = "$tmpdir/xdg/superpowers-manager"
+test "$(XDG_CONFIG_HOME= HOME="$tmpdir/home" spw_selection_config_dir)" = "$tmpdir/home/.config/superpowers-manager"
 test "$(HOME="$tmpdir/home" spw_selection_config_dir)" = "$tmpdir/home/.config/superpowers-manager"
 
 if (SUPERPOWERS_CONFIG_DIR=relative spw_selection_config_dir) >"$tmpdir/out" 2>&1; then

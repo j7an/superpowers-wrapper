@@ -102,7 +102,10 @@ spw_verify_raw_commit() (
         ;;
     esac
   fi
-  if ! git -C "$verify_workspace" cat-file -e "$commit^{commit}" 2>/dev/null; then
+  if ! object_type=$(git -C "$verify_workspace" cat-file -t "$commit" 2>/dev/null); then
+    spw_die "requested object is not a commit: $commit"
+  fi
+  if [ "$object_type" != commit ]; then
     spw_die "requested object is not a commit: $commit"
   fi
   printf '%s\n' "$commit"
@@ -133,7 +136,10 @@ spw_fetch_exact_commit() (
         ;;
     esac
   fi
-  if ! git -C "$repository" cat-file -e "$commit^{commit}" 2>/dev/null; then
+  if ! object_type=$(git -C "$repository" cat-file -t "$commit" 2>/dev/null); then
+    spw_die "requested object is not a commit: $commit"
+  fi
+  if [ "$object_type" != commit ]; then
     spw_die "requested object is not a commit: $commit"
   fi
 )
