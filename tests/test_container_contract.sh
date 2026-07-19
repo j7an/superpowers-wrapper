@@ -64,8 +64,6 @@ RUBY
 
 ruby - "$probe" <<'RUBY'
 probe = File.read(ARGV.fetch(0))
-commits = probe.scan(/^commit_([ab])=([0-9a-f]{40})$/).to_h
-raise "offline probe must define distinct A and B commits" unless commits.keys.sort == ["a", "b"] && commits["a"] != commits["b"]
 raise "offline probe Codex calls must use the timeout wrapper" if probe.match?(/^\s*codex\s+plugin\s+/)
 run_codex = probe.match(/^run_codex\(\) \{\n(?<body>.*?)^\}\n/m)
 raise "offline probe must define run_codex" unless run_codex
@@ -73,11 +71,28 @@ run_codex_lines = run_codex[:body].lines.map(&:strip).reject(&:empty?)
 unless run_codex_lines == ['"$timeout_bin" 30 codex "$@"']
   raise "run_codex must route through the selected timeout binary"
 end
-raise "offline probe must assert marketplace B registration" unless probe.include?('assert_marketplace_root "$moved"')
-unless probe.include?('install_plugin_and_assert_active "$version_b" "$commit_b" "$commit_a"')
-  raise "offline probe must assert the CLI-selected B cache root and reject stale A provenance"
-end
-raise "offline probe must not accept provenance from an arbitrary cache path" if probe.include?("search_root.rglob")
+required = [
+  'commit_a=$(git -C "$upstream" rev-parse HEAD)',
+  'version_a="1.0.0+manager.$short_a"',
+  'commit_b=$(git -C "$upstream" rev-parse HEAD)',
+  'version_b="1.1.0+manager.$short_b"',
+  'run_manager track-latest',
+  'run_manager install',
+  'initial_listing=$(run_codex plugin list --json)',
+  'assert_active_installed_commit "$initial_listing" "$version_a" "$commit_a" ""',
+  'reload_listing=$(run_codex plugin list --json)',
+  'assert_active_installed_commit "$reload_listing" "$version_a" "$commit_a" "$commit_b"',
+  'run_manager update',
+  'updated_listing=$(run_codex plugin list --json)',
+  'assert_active_installed_commit "$updated_listing" "$version_b" "$commit_b" "$commit_a"',
+  'run_manager uninstall',
+  'assert_marketplace_root "$package"',
+]
+required.each { |text| raise "missing manager A/B step: #{text}" unless probe.include?(text) }
+raise "reload opportunity must use real Codex plugin inspection" unless probe.include?('reload_listing=$(run_codex plugin list --json)')
+raise "offline probe must not sweep retained cache paths" if probe.match?(/find\s+.*(?:superpowers-manager|\.superpowers-upstream\.json)/) || probe.include?('search_root.rglob')
+raise "old generic install helper must be replaced" if probe.include?('install_plugin_and_assert_active')
+raise "old moved-marketplace assertion must be replaced" if probe.include?('assert_marketplace_root "$moved"')
 unless probe.match?(/final_plugins=\$\(run_codex plugin list --json\).*final_marketplaces=\$\(run_codex plugin marketplace list --json\)/m)
   raise "offline probe must capture both final listings before absence assertions"
 end
