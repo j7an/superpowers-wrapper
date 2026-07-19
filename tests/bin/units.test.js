@@ -12,6 +12,15 @@ assert.deepStrictEqual(
   bin.parseArgs(['probe', '--porcelain']),
   { kind: 'run', cmd: 'probe', args: ['--porcelain'] }
 );
+assert.deepStrictEqual(
+  bin.parseArgs(['pin', 'v6.1.1']),
+  { kind: 'run', cmd: 'pin', args: ['v6.1.1'] }
+);
+for (const argv of [['pin'], ['pin', 'a', 'b'], ['track-latest', 'x'], ['unpin', 'x']]) {
+  assert.strictEqual(bin.parseArgs(argv).kind, 'usage-error');
+}
+assert.strictEqual(bin.parseArgs(['track-latest']).kind, 'run');
+assert.strictEqual(bin.parseArgs(['unpin']).kind, 'run');
 for (const cmd of ['prepare', 'probe', 'install', 'update', 'uninstall']) {
   assert.strictEqual(bin.parseArgs([cmd]).kind, 'run');
 }
@@ -21,6 +30,21 @@ assert.strictEqual(bin.parseArgs(['--version']).kind, 'version');
 // Unknown subcommands and stray flags NEVER fall through to update.
 assert.strictEqual(bin.parseArgs(['bogus']).kind, 'usage-error');
 assert.strictEqual(bin.parseArgs(['--porcelain']).kind, 'usage-error');
+
+const requirements = bin.commandRequirements();
+assert.deepStrictEqual(requirements.pin, ['git', 'python3']);
+assert.deepStrictEqual(requirements['track-latest'], ['python3']);
+assert.deepStrictEqual(requirements.unpin, []);
+assert.deepStrictEqual(requirements.uninstall, ['python3', 'codex']);
+
+// --- usage separates saving selection intent from applying it ---
+const help = bin.usage();
+for (const text of ['pin REF', 'track-latest', 'unpin', 'save intent only', 'do not prepare or install']) {
+  assert.ok(help.includes(text), `help must include ${text}`);
+}
+assert.ok(help.includes('SUPERPOWERS_CONFIG_DIR'));
+assert.ok(help.includes('$XDG_CONFIG_HOME/superpowers-manager'));
+assert.ok(help.includes('$HOME/.config/superpowers-manager'));
 
 // --- buildSpawn: POSIX executes the script directly ---
 const posix = bin.buildSpawn('probe', ['--porcelain'], '/root', '/bin/sh', 'linux');
