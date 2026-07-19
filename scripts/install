@@ -36,19 +36,10 @@ desired_commit=$(spw_metadata_commit_or_empty "$root/plugins/superpowers/.superp
 [ -n "$desired_commit" ] || spw_die "generated metadata missing desired commit after prepare"
 
 tmp_parent="${TMPDIR:-/tmp}"
-if ! install_workspace=$(mktemp -d "$tmp_parent/superpowers-manager.install.XXXXXX"); then
+if ! install_workspace=$(spw_make_workspace "$tmp_parent" "superpowers-manager.install"); then
   spw_die "cannot create install workspace under $tmp_parent"
 fi
-cleanup_install_workspace() {
-  status=$?
-  trap - 0 HUP INT TERM
-  rm -rf "$install_workspace" || :
-  exit "$status"
-}
-trap cleanup_install_workspace 0
-trap 'exit 129' HUP
-trap 'exit 130' INT
-trap 'exit 143' TERM
+spw_install_workspace_trap "$install_workspace"
 
 TMPDIR="$install_workspace"
 export TMPDIR

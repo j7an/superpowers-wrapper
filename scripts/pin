@@ -20,19 +20,10 @@ fi
 spw_require_command python3
 state_path=$(spw_selection_state_path)
 tmp_parent="${TMPDIR:-/tmp}"
-if ! pin_workspace=$(mktemp -d "$tmp_parent/superpowers-manager.pin.XXXXXX"); then
+if ! pin_workspace=$(spw_make_workspace "$tmp_parent" "superpowers-manager.pin"); then
   spw_die "cannot create pin workspace under $tmp_parent"
 fi
-cleanup_pin_workspace() {
-  status=$?
-  trap - 0 HUP INT TERM
-  rm -rf "$pin_workspace" || :
-  exit "$status"
-}
-trap cleanup_pin_workspace 0
-trap 'exit 129' HUP
-trap 'exit 130' INT
-trap 'exit 143' TERM
+spw_install_workspace_trap "$pin_workspace"
 
 normalized="$pin_workspace/selection.json"
 if state_error=$(python3 -S "$root/scripts/core/selection-state.py" read \
