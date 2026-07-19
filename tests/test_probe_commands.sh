@@ -4,6 +4,7 @@ set -eu
 root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 tmpdir=$(mktemp -d)
 trap 'rm -rf "$tmpdir"' EXIT INT TERM
+tmpdir_physical=$(CDPATH= cd -- "$tmpdir" && pwd -P)
 
 . "$root/scripts/core/common.sh"
 . "$root/scripts/core/provenance.sh"
@@ -77,7 +78,7 @@ probe_tmp="$tmpdir/probe-tmp"
 git_log="$tmpdir/git.log"
 mkdir -p "$tool_path"
 mkdir -p "$probe_tmp"
-for tool in awk sed find head cut dirname pwd grep rm mktemp; do
+for tool in awk sed find head cut dirname pwd grep rm mktemp sort tail; do
   real=$(command -v "$tool")
   ln -sf "$real" "$tool_path/$tool"
 done
@@ -293,6 +294,28 @@ printf '%s\n' "$human_output" | grep -Fxq \
   'warning: effective ref and source have mixed origins (ref: environment, source: user-config)'
 
 mv "$offline_source" "$upstream"
+
+# A dash-prefixed local source saved by track-latest remains usable by probe.
+git -C "$upstream" tag v1.0.0
+ln -s upstream "$tmpdir/-upstream"
+dash_config="$tmpdir/dash-config"
+(
+  cd "$tmpdir"
+  SUPERPOWERS_CONFIG_DIR="$dash_config" SUPERPOWERS_UPSTREAM_URL=-upstream \
+    /bin/sh "$pkg/scripts/track-latest" >/dev/null
+)
+: > "$adapter_log"
+: > "$git_log"
+output=$(
+  cd "$tmpdir"
+  run_probe_with_saved_selection "$dash_config" porcelain
+)
+assert_probe_porcelain "$desired_short" "current" neither "$output"
+printf '%s\n' "$output" | grep -Fxq 'selection_mode=track-latest'
+printf '%s\n' "$output" | grep -Fxq 'effective_source=-upstream'
+printf '%s\n' "$output" | grep -Fxq 'saved_source=-upstream'
+grep -Fq -- "ls-remote --tags -- $tmpdir_physical/-upstream refs/tags/v*" "$git_log"
+assert_probe_tmp_empty
 
 # Honest unsupported update control is reportable; execution or protocol
 # validation failures remain operational failures.

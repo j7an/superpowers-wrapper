@@ -30,6 +30,8 @@ import { spawnSync } from 'node:child_process';
 const SUBCOMMANDS = [
   'pin', 'track-latest', 'unpin', 'prepare', 'probe', 'install', 'update', 'uninstall',
 ];
+const PIN_TAG_RE = /^v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-(?:(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*))?$/;
+const PIN_COMMIT_RE = /^[0-9A-Fa-f]{40}$/;
 /** @type {Record<Subcommand, string[]>} */
 const COMMAND_REQUIREMENTS = {
   pin: ['git', 'python3'],
@@ -93,6 +95,12 @@ function parseArgs(argv) {
     const args = argv.slice(1);
     if (first === 'pin' && args.length !== 1) {
       return { kind: 'usage-error', message: 'usage: superpowers-manager pin REF' };
+    }
+    if (first === 'pin' && !PIN_TAG_RE.test(args[0]) && !PIN_COMMIT_RE.test(args[0])) {
+      return {
+        kind: 'usage-error',
+        message: 'pin REF must be an exact v-prefixed SemVer tag or full 40-hex commit',
+      };
     }
     if ((first === 'track-latest' || first === 'unpin') && args.length !== 0) {
       return { kind: 'usage-error', message: `usage: superpowers-manager ${first}` };

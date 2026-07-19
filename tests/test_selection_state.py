@@ -161,6 +161,13 @@ class SelectionStateTests(unittest.TestCase):
         deeply_nested = "[" * 300 + "0" + "]" * 300
         self.assert_read_fails(deeply_nested, "nesting")
 
+    def test_read_rejects_oversized_integer_without_traceback(self) -> None:
+        oversized_integer = "9" * 5000
+        self.assert_read_fails(
+            '{"schema_version":' + oversized_integer + '}',
+            "invalid JSON",
+        )
+
     def test_read_rejects_empty_multiline_and_invalid_ref_strings(self) -> None:
         invalid_records = (
             {**TRACK_LATEST, "source": ""},

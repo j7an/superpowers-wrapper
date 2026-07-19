@@ -4,6 +4,7 @@ set -eu
 root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 tmpdir=$(mktemp -d)
 trap 'rm -rf "$tmpdir"' EXIT INT TERM
+tmpdir_physical=$(CDPATH= cd -- "$tmpdir" && pwd -P)
 
 upstream="$tmpdir/upstream"
 output="$tmpdir/out"
@@ -423,6 +424,29 @@ if grep -Fq 'ls-remote' "$git_log"; then
   echo "environment source must not cause a saved pin to be re-resolved" >&2
   exit 1
 fi
+
+# A dash-prefixed local source saved by track-latest remains usable by prepare
+# for both the initial clone and a later cache fetch.
+ln -s upstream "$tmpdir/-upstream"
+dash_config="$tmpdir/dash-config"
+(
+  cd "$tmpdir"
+  SUPERPOWERS_CONFIG_DIR="$dash_config" SUPERPOWERS_UPSTREAM_URL=-upstream \
+    sh "$root/scripts/track-latest" >/dev/null
+)
+: > "$git_log"
+(
+  cd "$tmpdir"
+  run_prepare_with_saved_selection "$dash_config" "out-dash-source"
+  run_prepare_with_saved_selection "$dash_config" "out-dash-source"
+)
+assert_prepare_commit "out-dash-source" "$release_commit"
+assert_prepare_metadata_value "out-dash-source" source -upstream
+grep -Fq -- "ls-remote --tags -- $tmpdir_physical/-upstream refs/tags/v*" "$git_log"
+grep -Fq -- "clone -- $tmpdir_physical/-upstream $tmpdir/cache-out-dash-source/superpowers" \
+  "$git_log"
+grep -Fq -- \
+  "fetch --tags --prune -- $tmpdir_physical/-upstream" "$git_log"
 
 # Unsafe or invalid selection state fails before any Git or adapter access and
 # preserves the previous generated tree.

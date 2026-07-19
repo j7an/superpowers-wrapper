@@ -250,7 +250,7 @@ spw_codex_build() {
 
   if python3 -S "$validator" \
     --plugin-root "$candidate_root" \
-    --source "$upstream_source" \
+    --source="$upstream_source" \
     --requested-ref "$requested_ref" \
     --resolved-ref "$resolved_ref" \
     --commit "$commit" \

@@ -41,14 +41,19 @@ spw_is_full_commit() {
   esac
 }
 
+spw_git_safe_source() {
+  source="$1"
+  case "$source" in
+    /*|*://*|*:*|~*) printf '%s\n' "$source" ;;
+    *) printf '%s/%s\n' "$(pwd -P)" "$source" ;;
+  esac
+}
+
 spw_resolve_exact_tag() {
   source="$1"
   ref="$2"
   source_display=$(spw_display_source "$source")
-  case "$source" in
-    -*) query_source="./$source" ;;
-    *) query_source="$source" ;;
-  esac
+  query_source=$(spw_git_safe_source "$source")
   if ! output=$(git ls-remote --tags -- "$query_source" "refs/tags/$ref" "refs/tags/$ref^{}" 2>&1); then
     spw_die "cannot query exact upstream tag $ref from $source_display: $output"
   fi
@@ -66,11 +71,7 @@ spw_verify_raw_commit() (
   commit=$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]')
   workspace="$3"
   source_display=$(spw_display_source "$source")
-  case "$source" in
-    ./*|../*) fetch_source="$(pwd -P)/$source" ;;
-    /*|*://*|*:*|~*) fetch_source="$source" ;;
-    *) fetch_source="$(pwd -P)/$source" ;;
-  esac
+  fetch_source=$(spw_git_safe_source "$source")
 
   if ! verify_workspace=$(mktemp -d "$workspace/superpowers-manager.commit.XXXXXX"); then
     spw_die "cannot create raw-commit verification workspace under $workspace"
@@ -112,11 +113,7 @@ spw_fetch_exact_commit() (
   commit="$2"
   repository="$3"
   source_display=$(spw_display_source "$source")
-  case "$source" in
-    ./*|../*) fetch_source="$(pwd -P)/$source" ;;
-    /*|*://*|*:*|~*) fetch_source="$source" ;;
-    *) fetch_source="$(pwd -P)/$source" ;;
-  esac
+  fetch_source=$(spw_git_safe_source "$source")
 
   if [ ! -d "$repository/.git" ]; then
     if ! init_output=$(git init "$repository" 2>&1); then
@@ -221,9 +218,10 @@ spw_resolve_ref() {
   upstream_url="$1"
   requested_ref="$2"
   spw_require_command git
+  query_source=$(spw_git_safe_source "$upstream_url")
 
   if [ "$requested_ref" = "latest-release" ]; then
-    if ! output=$(git ls-remote --tags "$upstream_url" 'refs/tags/v*' 2>&1); then
+    if ! output=$(git ls-remote --tags -- "$query_source" 'refs/tags/v*' 2>&1); then
       spw_die "cannot query upstream tags from $upstream_url: $output"
     fi
     if ! selected=$(printf '%s\n' "$output" | spw_select_latest_release_from_ls_remote); then
@@ -238,7 +236,7 @@ spw_resolve_ref() {
     return
   fi
 
-  if ! tag_output=$(git ls-remote --tags "$upstream_url" "refs/tags/$requested_ref" "refs/tags/$requested_ref^{}" 2>&1); then
+  if ! tag_output=$(git ls-remote --tags -- "$query_source" "refs/tags/$requested_ref" "refs/tags/$requested_ref^{}" 2>&1); then
     spw_die "cannot query upstream tag $requested_ref from $upstream_url: $tag_output"
   fi
   resolved=$(printf '%s\n' "$tag_output" | awk -v tag_ref="refs/tags/$requested_ref" '
@@ -252,7 +250,7 @@ spw_resolve_ref() {
     return
   fi
 
-  if ! ref_output=$(git ls-remote "$upstream_url" "$requested_ref" 2>&1); then
+  if ! ref_output=$(git ls-remote -- "$query_source" "$requested_ref" 2>&1); then
     spw_die "cannot query upstream ref $requested_ref from $upstream_url: $ref_output"
   fi
   resolved=$(printf '%s\n' "$ref_output" | awk 'NF >= 2 { print $1; exit }')

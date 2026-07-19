@@ -200,6 +200,8 @@ def load_json(path: Path) -> object:
         raise SelectionError(
             f"invalid JSON in {path}: line {exc.lineno} column {exc.colno}: {exc.msg}"
         ) from exc
+    except ValueError as exc:
+        raise SelectionError(f"invalid JSON in {path}: {exc}") from exc
     except (OSError, UnicodeError) as exc:
         raise SelectionError(f"cannot read selection state {path}: {exc}") from exc
     finally:

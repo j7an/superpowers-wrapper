@@ -56,12 +56,13 @@ mkdir -p "$cache_parent" "$tmp_parent"
 if [ "$SPW_SELECTION_MODE" = "pinned" ]; then
   spw_fetch_exact_commit "$SPW_EFFECTIVE_SOURCE" "$SPW_DESIRED_COMMIT" "$cache"
 else
+  git_source=$(spw_git_safe_source "$SPW_EFFECTIVE_SOURCE")
   if [ -d "$cache/.git" ]; then
-    if ! git -C "$cache" fetch --tags --prune "$SPW_EFFECTIVE_SOURCE"; then
+    if ! git -C "$cache" fetch --tags --prune -- "$git_source"; then
       spw_die "cannot fetch upstream repo: $SPW_EFFECTIVE_SOURCE"
     fi
   else
-    if ! git clone "$SPW_EFFECTIVE_SOURCE" "$cache"; then
+    if ! git clone -- "$git_source" "$cache"; then
       spw_die "cannot clone upstream repo: $SPW_EFFECTIVE_SOURCE"
     fi
   fi

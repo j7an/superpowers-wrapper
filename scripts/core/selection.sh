@@ -83,7 +83,7 @@ spw_compute_effective_selection() {
 
   if _spw_selection_error=$(
     python3 -S "$_spw_selection_root/scripts/core/selection-state.py" \
-      validate-source --source "$SPW_EFFECTIVE_SOURCE" 2>&1
+      validate-source --source="$SPW_EFFECTIVE_SOURCE" 2>&1
   ); then
     :
   else
@@ -152,7 +152,7 @@ spw_display_source() {
   _spw_selection_display_source="$1"
   if _spw_selection_display=$(
     python3 -S "$(spw_root)/scripts/core/selection-state.py" \
-      display-source --source "$_spw_selection_display_source" 2>/dev/null
+      display-source --source="$_spw_selection_display_source" 2>/dev/null
   ); then
     printf '%s\n' "$_spw_selection_display"
   else

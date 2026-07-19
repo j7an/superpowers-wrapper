@@ -133,6 +133,16 @@ rc=0; run_bin install >/dev/null 2>"$tmpdir/err" || rc=$?
 grep -Fq "required command not found: git" "$tmpdir/err"
 [ ! -s "$log" ] || { echo "preflight failure must not dispatch" >&2; exit 1; }
 
+# Invalid pin syntax is a usage error before Git/Python preflight or dispatch.
+rm "$fakebin/python3"
+: > "$log"
+rc=0; run_bin pin main >/dev/null 2>"$tmpdir/err" || rc=$?
+[ "$rc" -eq 2 ] || { echo "expected exit 2 for invalid pin ref, got $rc" >&2; exit 1; }
+grep -Fq 'pin REF must be an exact v-prefixed SemVer tag or full 40-hex commit' \
+  "$tmpdir/err"
+[ ! -s "$log" ] || { echo "invalid pin ref must not dispatch" >&2; exit 1; }
+printf '#!/bin/sh\nexit 0\n' > "$fakebin/python3" && chmod +x "$fakebin/python3"
+
 for cmd in track-latest unpin uninstall; do
   : > "$log"
   run_bin "$cmd" >/dev/null

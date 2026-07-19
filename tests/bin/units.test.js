@@ -16,6 +16,34 @@ assert.deepStrictEqual(
   bin.parseArgs(['pin', 'v6.1.1']),
   { kind: 'run', cmd: 'pin', args: ['v6.1.1'] }
 );
+for (const ref of [
+  'v0.0.0',
+  'v1.2.3-0',
+  'v1.2.3-alpha.1',
+  '0123456789abcdef0123456789abcdef01234567',
+  '0123456789ABCDEF0123456789ABCDEF01234567',
+]) {
+  assert.deepStrictEqual(
+    bin.parseArgs(['pin', ref]),
+    { kind: 'run', cmd: 'pin', args: [ref] }
+  );
+}
+for (const ref of [
+  'main',
+  '1.2.3',
+  'V1.2.3',
+  'v01.2.3',
+  'v1.02.3',
+  'v1.2.03',
+  'v1.2.3-01',
+  'v1.2.3+build.1',
+  '0123456789abcdef0123456789abcdef0123456',
+  '0123456789abcdef0123456789abcdef012345678',
+  'g123456789abcdef0123456789abcdef01234567',
+  'v1.2.3\ninvalid',
+]) {
+  assert.strictEqual(bin.parseArgs(['pin', ref]).kind, 'usage-error');
+}
 for (const argv of [['pin'], ['pin', 'a', 'b'], ['track-latest', 'x'], ['unpin', 'x']]) {
   assert.strictEqual(bin.parseArgs(argv).kind, 'usage-error');
 }
