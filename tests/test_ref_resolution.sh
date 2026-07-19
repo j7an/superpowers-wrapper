@@ -4,6 +4,7 @@ set -eu
 root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 . "$root/scripts/core/common.sh"
 . "$root/scripts/core/upstream.sh"
+. "$root/scripts/core/selection.sh"
 
 tmpdir=$(mktemp -d)
 trap 'rm -rf "$tmpdir"' EXIT INT TERM
@@ -89,6 +90,20 @@ test "$raw_resolved" = "raw-commit $main_commit $main_commit"
 main_resolved=$(spw_resolve_ref "$repo" "main")
 test "$main_resolved" = "ref main $main_commit"
 
+# Preparing a saved exact pin must obtain that exact object from the effective
+# source and prove it is a commit inside the persistent cache repository.
+exact_cache="$tmpdir/exact-cache"
+spw_fetch_exact_commit "$repo" "$release_commit" "$exact_cache"
+git -C "$exact_cache" cat-file -e "$release_commit^{commit}"
+
+blob_object=$(git -C "$repo" rev-parse "$main_commit:file.txt")
+if spw_fetch_exact_commit "$repo" "$blob_object" "$tmpdir/blob-cache" \
+    >"$tmpdir/blob-fetch.out" 2>"$tmpdir/blob-fetch.err"; then
+  echo "exact object fetch unexpectedly accepted a blob" >&2
+  exit 1
+fi
+grep -Fq "requested object is not a commit: $blob_object" "$tmpdir/blob-fetch.err"
+
 branch_named_like_tag=$(spw_resolve_ref "$repo" "v9.9.9")
 test "$branch_named_like_tag" = "ref v9.9.9 $main_commit"
 
@@ -96,3 +111,5 @@ if spw_select_latest_release_from_ls_remote < /dev/null >/dev/null 2>&1; then
   echo "expected empty tag list to fail" >&2
   exit 1
 fi
+
+echo "test_ref_resolution: OK"

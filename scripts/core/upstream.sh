@@ -107,6 +107,40 @@ spw_verify_raw_commit() (
   printf '%s\n' "$commit"
 )
 
+spw_fetch_exact_commit() (
+  source="$1"
+  commit="$2"
+  repository="$3"
+  source_display=$(spw_display_source "$source")
+  case "$source" in
+    ./*|../*) fetch_source="$(pwd -P)/$source" ;;
+    /*|*://*|*:*|~*) fetch_source="$source" ;;
+    *) fetch_source="$(pwd -P)/$source" ;;
+  esac
+
+  if [ ! -d "$repository/.git" ]; then
+    if ! init_output=$(git init "$repository" 2>&1); then
+      spw_die "cannot initialize upstream cache repository: $init_output"
+    fi
+  fi
+
+  if fetch_output=$(git -C "$repository" fetch --no-tags -- "$fetch_source" "$commit" 2>&1); then
+    :
+  else
+    case "$fetch_output" in
+      *'not our ref'*|*'unadvertised object'*|*"couldn't find remote ref"*)
+        spw_die "source cannot supply requested commit: $commit"
+        ;;
+      *)
+        spw_die "cannot fetch requested commit from $source_display"
+        ;;
+    esac
+  fi
+  if ! git -C "$repository" cat-file -e "$commit^{commit}" 2>/dev/null; then
+    spw_die "requested object is not a commit: $commit"
+  fi
+)
+
 spw_sanitize_ref_for_version() {
   ref="$1"
   sanitized=$(printf '%s' "$ref" | sed 's/[^0-9A-Za-z-][^0-9A-Za-z-]*/-/g; s/^-*//; s/-*$//')
