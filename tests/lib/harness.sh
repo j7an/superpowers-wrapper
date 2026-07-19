@@ -7,6 +7,16 @@ spw_test_tmpdir() {
   trap 'rm -rf "$tmpdir"' EXIT INT TERM
 }
 
+spw_git_commit() {
+  _repo=$1
+  _message=$2
+  git -C "$_repo" \
+    -c user.email=superpowers-manager@example.invalid \
+    -c user.name=superpowers-manager \
+    -c commit.gpgsign=false \
+    commit -m "$_message" >/dev/null
+}
+
 spw_section() {
   _name=$1
   shift
