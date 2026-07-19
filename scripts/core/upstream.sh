@@ -45,7 +45,11 @@ spw_resolve_exact_tag() {
   source="$1"
   ref="$2"
   source_display=$(spw_display_source "$source")
-  if ! output=$(git ls-remote --tags "$source" "refs/tags/$ref" "refs/tags/$ref^{}" 2>&1); then
+  case "$source" in
+    -*) query_source="./$source" ;;
+    *) query_source="$source" ;;
+  esac
+  if ! output=$(git ls-remote --tags -- "$query_source" "refs/tags/$ref" "refs/tags/$ref^{}" 2>&1); then
     spw_die "cannot query exact upstream tag $ref from $source_display: $output"
   fi
   commit=$(printf '%s\n' "$output" | awk -v direct="refs/tags/$ref" '

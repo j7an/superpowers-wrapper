@@ -156,6 +156,30 @@ python3 -S "$state_helper" read \
 test "$(json_get saved_source)" = -upstream
 test "$(json_get saved_commit)" = "$head_commit"
 
+# Exact-tag verification supports the same relative and dash-prefixed local
+# source forms, with the repository separated from ls-remote options.
+tag_relative_config="$tmpdir/tag-relative-config"
+(
+  cd "$tmpdir"
+  SUPERPOWERS_CONFIG_DIR="$tag_relative_config" SUPERPOWERS_UPSTREAM_URL=upstream \
+    sh "$root/scripts/pin" v1.0.0 >"$tmpdir/out"
+)
+python3 -S "$state_helper" read \
+  --path "$tag_relative_config/selection.json" --output "$normalized"
+test "$(json_get saved_source)" = upstream
+test "$(json_get saved_commit)" = "$v1_commit"
+
+tag_dash_config="$tmpdir/tag-dash-config"
+(
+  cd "$tmpdir"
+  SUPERPOWERS_CONFIG_DIR="$tag_dash_config" SUPERPOWERS_UPSTREAM_URL=-upstream \
+    sh "$root/scripts/pin" v1.0.0 >"$tmpdir/out"
+)
+python3 -S "$state_helper" read \
+  --path "$tag_dash_config/selection.json" --output "$normalized"
+test "$(json_get saved_source)" = -upstream
+test "$(json_get saved_commit)" = "$v1_commit"
+
 for ref in 1.2.3 v1.2 v1.2.3+build.4 latest-release main "${head_commit%????????}"; do
   assert_pin_usage_failure "$ref"
 done
