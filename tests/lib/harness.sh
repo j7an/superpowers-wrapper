@@ -2,6 +2,11 @@ spw_test_root() {
   root=$(CDPATH= cd -- "$test_dir/.." && pwd)
 }
 
+spw_test_tmpdir() {
+  tmpdir=$(mktemp -d)
+  trap 'rm -rf "$tmpdir"' EXIT INT TERM
+}
+
 spw_section() {
   _name=$1
   shift
