@@ -7,6 +7,10 @@ spw_test_tmpdir() {
   trap 'rm -rf "$tmpdir"' EXIT INT TERM
 }
 
+spw_assert_json() {
+  python3 -S "$root/tests/lib/assert_json.py" "$@"
+}
+
 spw_git_commit() {
   _repo=$1
   _message=$2
