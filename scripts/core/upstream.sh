@@ -115,16 +115,28 @@ spw_fetch_exact_commit() (
   source="$1"
   commit="$2"
   repository="$3"
+  workspace="$4"
   source_display=$(spw_display_source "$source")
   fetch_source=$(spw_git_safe_source "$source")
 
-  if [ ! -d "$repository/.git" ]; then
-    if ! init_output=$(git init "$repository" 2>&1); then
-      spw_die "cannot initialize upstream cache repository: $init_output"
-    fi
+  if ! fetch_workspace=$(mktemp -d "$workspace/superpowers-manager.fetch.XXXXXX"); then
+    spw_die "cannot create exact-commit fetch workspace under $workspace"
   fi
+  cleanup_fetch_workspace() {
+    status=$?
+    trap - 0 HUP INT TERM
+    rm -rf "$fetch_workspace" || :
+    exit "$status"
+  }
+  trap cleanup_fetch_workspace 0
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
 
-  if fetch_output=$(git -C "$repository" fetch --no-tags -- "$fetch_source" "$commit" 2>&1); then
+  if ! init_output=$(git init "$fetch_workspace" 2>&1); then
+    spw_die "cannot initialize exact-commit fetch workspace: $init_output"
+  fi
+  if fetch_output=$(git -C "$fetch_workspace" fetch --no-tags -- "$fetch_source" "$commit" 2>&1); then
     :
   else
     case "$fetch_output" in
@@ -136,11 +148,28 @@ spw_fetch_exact_commit() (
         ;;
     esac
   fi
-  if ! object_type=$(git -C "$repository" cat-file -t "$commit" 2>/dev/null); then
+  if ! object_type=$(git -C "$fetch_workspace" cat-file -t "$commit" 2>/dev/null); then
     spw_die "requested object is not a commit: $commit"
   fi
   if [ "$object_type" != commit ]; then
     spw_die "requested object is not a commit: $commit"
+  fi
+
+  if [ ! -d "$repository/.git" ]; then
+    if ! init_output=$(git init "$repository" 2>&1); then
+      spw_die "cannot initialize upstream cache repository: $init_output"
+    fi
+  fi
+  if ! transfer_output=$(
+    git -C "$repository" fetch --no-tags -- "$fetch_workspace" "$commit" 2>&1
+  ); then
+    spw_die "cannot transfer requested commit into upstream cache: $transfer_output"
+  fi
+  if ! object_type=$(git -C "$repository" cat-file -t "$commit" 2>/dev/null); then
+    spw_die "cannot verify requested commit in upstream cache: $commit"
+  fi
+  if [ "$object_type" != commit ]; then
+    spw_die "cannot verify requested commit in upstream cache: $commit"
   fi
 )
 

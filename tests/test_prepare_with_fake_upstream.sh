@@ -403,6 +403,26 @@ fi
 grep -Fq -- "fetch --no-tags -- $upstream $release_commit" "$git_log"
 grep -Fq -- "--requested-ref v6.0.3 --resolved-ref v6.0.3 --commit $release_commit" "$adapter_log"
 
+# A source override that cannot supply the saved commit must fail even when the
+# persistent cache was primed by the original source. Failure precedes adapter
+# access and generated-tree replacement.
+empty_upstream="$tmpdir/empty-upstream"
+git init --bare "$empty_upstream" >/dev/null
+test "$(git -C "$tmpdir/cache-out-saved-pin/superpowers" cat-file -t "$release_commit")" = commit
+printf 'preserve me\n' > "$tmpdir/out-saved-pin/preexisting-sentinel"
+: > "$adapter_log"
+: > "$git_log"
+if run_prepare_with_saved_selection "$saved_config" "out-saved-pin" \
+    SUPERPOWERS_UPSTREAM_URL="$empty_upstream" \
+    >"$tmpdir/source-proof.out" 2>"$tmpdir/source-proof.err"; then
+  echo "prepare unexpectedly used a cached object as source proof" >&2
+  exit 1
+fi
+grep -Fq "source cannot supply requested commit: $release_commit" \
+  "$tmpdir/source-proof.err"
+test -f "$tmpdir/out-saved-pin/preexisting-sentinel"
+test ! -s "$adapter_log"
+
 # Ref/source overrides remain independent. An environment ref uses the saved
 # source; an environment source can supply the still-authoritative saved pin.
 : > "$git_log"

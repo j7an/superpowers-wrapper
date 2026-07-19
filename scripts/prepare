@@ -54,7 +54,8 @@ spw_require_command "$SPW_ADAPTER"
 
 mkdir -p "$cache_parent" "$tmp_parent"
 if [ "$SPW_SELECTION_MODE" = "pinned" ]; then
-  spw_fetch_exact_commit "$SPW_EFFECTIVE_SOURCE" "$SPW_DESIRED_COMMIT" "$cache"
+  spw_fetch_exact_commit \
+    "$SPW_EFFECTIVE_SOURCE" "$SPW_DESIRED_COMMIT" "$cache" "$prepare_workspace"
 else
   git_source=$(spw_git_safe_source "$SPW_EFFECTIVE_SOURCE")
   if [ -d "$cache/.git" ]; then
