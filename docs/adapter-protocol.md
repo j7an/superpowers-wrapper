@@ -81,7 +81,7 @@ directly.
 
 ## Size-limit rationale
 
-Task 1 measured these response maxima without rounding:
+The measurement pass recorded these response maxima without rounding:
 
 | Environment | Maximum bytes | Source |
 |---|---:|---|
