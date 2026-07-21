@@ -37,7 +37,7 @@ action_pin_pair() (
       }
 
       sha = substr(ref, length(target) + 2)
-      if (sha ~ /^[0-9a-f]{40}$/ && comment ~ /^v[0-9]+\.[0-9]+\.[0-9]+$/) {
+      if (length(sha) == 40 && sha ~ /^[0-9a-f]+$/ && comment ~ /^v[0-9]+\.[0-9]+\.[0-9]+$/) {
         valid_count++
         pair = sha "\t" comment
       }
@@ -60,8 +60,19 @@ assert_action_pin() {
 
 find_literal_action_pin_snapshots() {
   awk '
-    /[[:alnum:]_.-]+\/[[:alnum:]_.\/-]+@[0-9A-Fa-f]{40}([[:space:]#"\047\\]|$)/ {
-      printf "%s:%d:%s\n", FILENAME, FNR, $0
+    {
+      remaining = $0
+      while (match(remaining, /[[:alnum:]_.-]+\/[[:alnum:]_.\/-]+@[0-9A-Fa-f]+/)) {
+        candidate = substr(remaining, RSTART, RLENGTH)
+        suffix = substr(remaining, RSTART + RLENGTH)
+        sha = substr(candidate, index(candidate, "@") + 1)
+        delimiter = substr(suffix, 1, 1)
+        if (length(sha) == 40 && (delimiter == "" || delimiter ~ /[[:space:]#"\047\\]/)) {
+          printf "%s:%d:%s\n", FILENAME, FNR, $0
+          next
+        }
+        remaining = suffix
+      }
     }
   ' "$@"
 }
