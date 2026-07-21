@@ -15,6 +15,7 @@ VERIFICATION_HINT_KEYS = {"mismatch", "missing"}
 OPERATIONS = {"build", "inspect", "install", "uninstall"}
 FINGERPRINT_RE = re.compile(r"(?:[0-9a-fA-F]{7}|[0-9a-fA-F]{40})\Z")
 MAX_NESTING = 64
+MAX_RESPONSE_BYTES = 1_048_576
 
 
 class ProtocolError(ValueError):
@@ -23,6 +24,17 @@ class ProtocolError(ValueError):
 
 def reject_constant(value: str) -> None:
     raise ProtocolError(f"non-standard JSON constant: {value}")
+
+
+def reject_duplicate_keys(
+    pairs: list[tuple[str, object]],
+) -> dict[str, object]:
+    obj: dict[str, object] = {}
+    for key, value in pairs:
+        if key in obj:
+            raise ProtocolError("duplicate object key")
+        obj[key] = value
+    return obj
 
 
 def nesting_exceeds_limit(value: object) -> bool:
@@ -237,8 +249,17 @@ def main() -> int:
     )
     args = parser.parse_args()
     try:
+        response_size = args.response.stat().st_size
+        if response_size > MAX_RESPONSE_BYTES:
+            raise ProtocolError(
+                f"response exceeds {MAX_RESPONSE_BYTES}-byte limit"
+            )
         with args.response.open(encoding="utf-8") as handle:
-            raw = json.load(handle, parse_constant=reject_constant)
+            raw = json.load(
+                handle,
+                parse_constant=reject_constant,
+                object_pairs_hook=reject_duplicate_keys,
+            )
         if nesting_exceeds_limit(raw):
             raise ProtocolError("response JSON nesting exceeds limit")
         messages, result, error = validate_envelope(

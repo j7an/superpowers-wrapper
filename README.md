@@ -80,7 +80,8 @@ compatibility evidence.
 
 ## Runtime architecture
 
-- `scripts/core/` owns the shared lifecycle, status, and protocol validation.
+- `scripts/core/` owns the shared lifecycle, status, and protocol validation;
+  see the [version-1 adapter response protocol](https://github.com/j7an/superpowers-manager/blob/main/docs/adapter-protocol.md).
 - `scripts/adapters/codex/` owns build, inspection, reconciliation, and Codex
   mutation.
 - Codex is the only supported adapter today; no public harness selector ships

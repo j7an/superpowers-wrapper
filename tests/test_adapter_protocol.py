@@ -11,6 +11,11 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 VALIDATOR = ROOT / "scripts/core/validate-adapter-response.py"
+EXPECTED_MAX_RESPONSE_BYTES = 1_048_576
+RESPONSE_TOO_LARGE_STDERR = (
+    "error: invalid adapter response: "
+    f"response exceeds {EXPECTED_MAX_RESPONSE_BYTES}-byte limit\n"
+)
 
 
 def envelope(operation: str, result: object, *, ok: bool = True) -> dict[str, object]:
@@ -26,6 +31,19 @@ def envelope(operation: str, result: object, *, ok: bool = True) -> dict[str, ob
             "hints": [],
         },
     }
+
+
+def padded_build_response(size: int) -> str:
+    payload = envelope("build", {})
+    payload["messages"] = [
+        {"channel": "stdout", "text": "size-stdout-sentinel"},
+        {"channel": "stderr", "text": "size-stderr-sentinel"},
+    ]
+    raw_payload = json.dumps(payload, separators=(",", ":"))
+    padding_bytes = size - len(raw_payload.encode("utf-8"))
+    if padding_bytes < 0:
+        raise AssertionError("response-size fixture exceeds requested size")
+    return raw_payload + " " * padding_bytes
 
 
 def validate(
@@ -121,6 +139,19 @@ def _run_validator(
 
 
 class AdapterProtocolValidatorTests(unittest.TestCase):
+    def assert_rejected_result(
+        self,
+        result: subprocess.CompletedProcess[str],
+        *,
+        sentinels: tuple[str, ...] = (),
+    ) -> None:
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertEqual(result.stdout, "")
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertIsNone(result.validated_result)
+        for sentinel in sentinels:
+            self.assertNotIn(sentinel, result.stdout + result.stderr)
+
     def assert_valid(
         self,
         payload: object,
@@ -312,6 +343,62 @@ class AdapterProtocolValidatorTests(unittest.TestCase):
             stderr="warn-1\nwarn-2\n",
         )
 
+    def test_enforces_inclusive_response_size_boundary_before_replay(self) -> None:
+        at_limit = padded_build_response(EXPECTED_MAX_RESPONSE_BYTES)
+        over_limit = at_limit + " "
+        self.assertEqual(
+            len(at_limit.encode("utf-8")), EXPECTED_MAX_RESPONSE_BYTES
+        )
+        self.assertEqual(
+            len(over_limit.encode("utf-8")), EXPECTED_MAX_RESPONSE_BYTES + 1
+        )
+
+        accepted = validate_raw(at_limit, "build")
+        self.assertEqual(accepted.returncode, 0, accepted.stdout + accepted.stderr)
+        self.assertEqual(accepted.stdout, "size-stdout-sentinel\n")
+        self.assertEqual(accepted.stderr, "size-stderr-sentinel\n")
+        self.assertEqual(accepted.validated_result, {})
+
+        rejected = validate_raw(over_limit, "build")
+        self.assert_rejected_result(
+            rejected,
+            sentinels=("size-stdout-sentinel", "size-stderr-sentinel"),
+        )
+        self.assertEqual(rejected.stderr, RESPONSE_TOO_LARGE_STDERR)
+
+    def test_response_size_limit_counts_utf8_bytes_before_replay(self) -> None:
+        payload = envelope("build", {})
+        payload["messages"] = [
+            {"channel": "stdout", "text": "utf8-size-stdout-sentinel"},
+            {"channel": "stderr", "text": "utf8-size-stderr-sentinel"},
+            {"channel": "stdout", "text": ""},
+        ]
+        raw_payload = json.dumps(
+            payload, ensure_ascii=False, separators=(",", ":")
+        )
+        multibyte_chars = (
+            EXPECTED_MAX_RESPONSE_BYTES - len(raw_payload)
+        ) // len("é".encode("utf-8")) + 1
+        self.assertGreater(multibyte_chars, 0)
+        payload["messages"][2]["text"] = "é" * multibyte_chars
+        raw_payload = json.dumps(
+            payload, ensure_ascii=False, separators=(",", ":")
+        )
+        self.assertLess(len(raw_payload), EXPECTED_MAX_RESPONSE_BYTES)
+        self.assertGreater(
+            len(raw_payload.encode("utf-8")), EXPECTED_MAX_RESPONSE_BYTES
+        )
+
+        rejected = validate_raw(raw_payload, "build")
+        self.assert_rejected_result(
+            rejected,
+            sentinels=(
+                "utf8-size-stdout-sentinel",
+                "utf8-size-stderr-sentinel",
+            ),
+        )
+        self.assertEqual(rejected.stderr, RESPONSE_TOO_LARGE_STDERR)
+
     def test_controlled_failure_replays_messages_error_and_hints(self) -> None:
         payload = envelope("install", {}, ok=False)
         payload["messages"] = [
@@ -500,6 +587,94 @@ class AdapterProtocolValidatorTests(unittest.TestCase):
         self.assertNotIn("Traceback", result.stderr)
         self.assertEqual(result.stdout, "")
         self.assertIsNone(result.validated_result)
+
+    def test_rejects_non_standard_json_constants_without_replay(self) -> None:
+        for constant in ("NaN", "Infinity", "-Infinity"):
+            with self.subTest(constant=constant):
+                raw_payload = (
+                    '{"protocol":'
+                    + constant
+                    + ',"operation":"build","ok":true,'
+                    '"messages":['
+                    '{"channel":"stdout","text":"constant-stdout-sentinel"},'
+                    '{"channel":"stderr","text":"constant-stderr-sentinel"}'
+                    '],"result":{},"error":null}'
+                )
+                result = validate_raw(raw_payload, "build")
+                self.assert_rejected_result(
+                    result,
+                    sentinels=(
+                        "constant-stdout-sentinel",
+                        "constant-stderr-sentinel",
+                    ),
+                )
+                self.assertIn(
+                    f"non-standard JSON constant: {constant}", result.stderr
+                )
+
+    def test_rejects_duplicate_object_keys_recursively_without_replay(self) -> None:
+        cases = (
+            (
+                (
+                    '{"protocol":1,"operation":"build","ok":true,"ok":false,'
+                    '"messages":['
+                    '{"channel":"stdout","text":"duplicate-stdout-sentinel"},'
+                    '{"channel":"stderr","text":"duplicate-stderr-sentinel"}'
+                    '],"result":{},"error":null}'
+                ),
+                "build",
+                None,
+            ),
+            (
+                (
+                    '{"protocol":1,"operation":"inspect","ok":true,'
+                    '"messages":['
+                    '{"channel":"stdout","text":"duplicate-stdout-sentinel"},'
+                    '{"channel":"stderr","text":"duplicate-stderr-sentinel"}'
+                    '],"result":{"view":"ownership",'
+                    '"resources":{"plugin":true,"plugin":false,"marketplace":false},'
+                    '"legacy_resources":{"plugin":false,"marketplace":false},'
+                    '"identity_state":"neither"},"error":null}'
+                ),
+                "inspect",
+                "ownership",
+            ),
+        )
+        for raw_payload, operation, inspect_view in cases:
+            with self.subTest(operation=operation, inspect_view=inspect_view):
+                result = validate_raw(
+                    raw_payload, operation, inspect_view=inspect_view
+                )
+                self.assert_rejected_result(
+                    result,
+                    sentinels=(
+                        "duplicate-stdout-sentinel",
+                        "duplicate-stderr-sentinel",
+                    ),
+                )
+                self.assertEqual(
+                    result.stderr,
+                    "error: invalid adapter response: duplicate object key\n",
+                )
+
+        valid_raw = json.dumps(envelope("build", {}), separators=(",", ":"))
+        control = validate_raw(valid_raw, "build")
+        self.assertEqual(control.returncode, 0, control.stdout + control.stderr)
+        self.assertEqual(control.stdout, "")
+        self.assertEqual(control.stderr, "")
+        self.assertEqual(control.validated_result, {})
+
+    def test_enforces_exact_json_nesting_boundary(self) -> None:
+        depth_64 = "[" * 64 + "0" + "]" * 64
+        accepted_boundary = validate_raw(depth_64, "build")
+        self.assert_rejected_result(accepted_boundary)
+        self.assertIn("response must be an object", accepted_boundary.stderr)
+        self.assertNotIn("nesting exceeds limit", accepted_boundary.stderr)
+
+        depth_65 = "[" * 65 + "0" + "]" * 65
+        rejected_boundary = validate_raw(depth_65, "build")
+        self.assert_rejected_result(rejected_boundary)
+        self.assertIn("response JSON nesting exceeds limit", rejected_boundary.stderr)
 
     def test_rejects_wrong_protocol_operation_types_and_views(self) -> None:
         invalid_cases = (
