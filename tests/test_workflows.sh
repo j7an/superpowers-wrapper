@@ -270,13 +270,19 @@ assert_rejected_action_pin() {
 test_action_pin_helper() {
   sha_one=$(printf '%040d' 1)
   sha_two=$(printf '%040d' 2)
+  short_sha=$(printf '%039d' 1)
+  long_sha=$(printf '%041d' 1)
   uppercase_sha=$(printf '%040d' 0 | tr 0 A)
   target=github/codeql-action/analyze
 
   block=$(printf '        uses: %s@%s # v4.99.0' "$target" "$sha_one")
   expected_pair=$(printf '%s\t%s' "$sha_one" "v4.99.0")
   actual_pair=$(action_pin_pair "$block" "$target")
-  [ "$actual_pair" = "$expected_pair" ]
+  if [ "$actual_pair" != "$expected_pair" ]; then
+    printf 'action pin pair mismatch for %s: got %s, expected %s\n' \
+      "$target" "$actual_pair" "$expected_pair" >&2
+    return 1
+  fi
   assert_action_pin "$block" "$target"
 
   block=$(printf "        uses: '%s@%s' # v4.99.0" "$target" "$sha_one")
@@ -288,6 +294,10 @@ test_action_pin_helper() {
     "        uses: $target@v4.99.0 # v4.99.0" "$target"
   assert_rejected_action_pin \
     "        uses: $target@$uppercase_sha # v4.99.0" "$target"
+  assert_rejected_action_pin \
+    "        uses: $target@$short_sha # v4.99.0" "$target"
+  assert_rejected_action_pin \
+    "        uses: $target@$long_sha # v4.99.0" "$target"
   assert_rejected_action_pin \
     "        uses: $target@$sha_one" "$target"
   assert_rejected_action_pin \
@@ -372,8 +382,16 @@ test_workflow_pin_contracts() {
     esac
   done <"$manifest"
 
-  [ "$pin_count" -eq 7 ]
-  [ "$shared_count" -eq 5 ]
+  if [ "$pin_count" -ne 7 ]; then
+    printf 'workflow pin inventory count mismatch: got %d, expected 7\n' \
+      "$pin_count" >&2
+    return 1
+  fi
+  if [ "$shared_count" -ne 5 ]; then
+    printf 'shared-workflows pin count mismatch: got %d, expected 5\n' \
+      "$shared_count" >&2
+    return 1
+  fi
   echo "test_workflow_pin_contracts: OK"
 }
 
@@ -390,16 +408,29 @@ test_literal_action_pin_detector() {
   single=$(printf "uses: 'actions/checkout@%s' # v7.0.0" "$sha")
   double=$(printf 'uses: "actions/checkout@%s" # v7.0.0' "$sha")
   escaped=$(printf 'block="uses: \\"actions/checkout@%s\\" # v7.0.0"' "$sha")
-  printf '%s\n' "$plain" "$full" "$single" "$double" "$escaped" >"$source_file"
+  parenthesis=$(printf 'pin=(actions/checkout@%s)' "$sha")
+  backtick=$(printf 'pin=`actions/checkout@%s`' "$sha")
+  semicolon=$(printf 'pin=actions/checkout@%s;' "$sha")
+  printf '%s\n' \
+    "$plain" "$full" "$single" "$double" "$escaped" \
+    "$parenthesis" "$backtick" "$semicolon" \
+    >"$source_file"
 
-  expected=$(printf '%s:%d:%s\n%s:%d:%s\n%s:%d:%s\n%s:%d:%s\n%s:%d:%s' \
+  expected=$(printf '%s:%d:%s\n%s:%d:%s\n%s:%d:%s\n%s:%d:%s\n%s:%d:%s\n%s:%d:%s\n%s:%d:%s\n%s:%d:%s' \
     "$source_file" 1 "$plain" \
     "$source_file" 2 "$full" \
     "$source_file" 3 "$single" \
     "$source_file" 4 "$double" \
-    "$source_file" 5 "$escaped")
+    "$source_file" 5 "$escaped" \
+    "$source_file" 6 "$parenthesis" \
+    "$source_file" 7 "$backtick" \
+    "$source_file" 8 "$semicolon")
   actual=$(find_literal_action_pin_snapshots "$source_file")
-  [ "$actual" = "$expected" ]
+  if [ "$actual" != "$expected" ]; then
+    printf 'literal action pin detector output mismatch:\nexpected:\n%s\nactual:\n%s\n' \
+      "$expected" "$actual" >&2
+    return 1
+  fi
 
   printf '%s\n' \
     "HEAD_SHA=$sha" \
@@ -408,7 +439,11 @@ test_literal_action_pin_detector() {
     "uses: actions/checkout@v7 # v7.0.0" \
     >"$negative_file"
   actual=$(find_literal_action_pin_snapshots "$negative_file")
-  [ -z "$actual" ]
+  if [ -n "$actual" ]; then
+    printf 'literal action pin detector accepted negative fixtures:\n%s\n' \
+      "$actual" >&2
+    return 1
+  fi
 
   echo "test_literal_action_pin_detector: OK"
 }
@@ -417,7 +452,8 @@ test_workflow_pin_source_policy() {
   violations=$(find_literal_action_pin_snapshots \
     "$root"/tests/*.sh \
     "$root"/tests/*.py \
-    "$root"/tests/lib/*.sh)
+    "$root"/tests/lib/*.sh \
+    "$root"/tests/lib/*.py)
   if [ -n "$violations" ]; then
     printf 'literal workflow pin snapshots found:\n%s\n' "$violations" >&2
     return 1

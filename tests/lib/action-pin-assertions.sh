@@ -67,7 +67,7 @@ find_literal_action_pin_snapshots() {
         suffix = substr(remaining, RSTART + RLENGTH)
         sha = substr(candidate, index(candidate, "@") + 1)
         delimiter = substr(suffix, 1, 1)
-        if (length(sha) == 40 && (delimiter == "" || delimiter ~ /[[:space:]#"\047\\]/)) {
+        if (length(sha) == 40 && (delimiter == "" || delimiter ~ /[[:space:][:punct:]]/)) {
           printf "%s:%d:%s\n", FILENAME, FNR, $0
           next
         }
