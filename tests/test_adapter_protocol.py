@@ -359,6 +359,46 @@ class AdapterProtocolValidatorTests(unittest.TestCase):
         )
         self.assertIsNone(rejected.validated_result)
 
+    def test_response_size_limit_counts_utf8_bytes_before_replay(self) -> None:
+        payload = envelope("build", {})
+        payload["messages"] = [
+            {"channel": "stdout", "text": "utf8-size-stdout-sentinel"},
+            {"channel": "stderr", "text": "utf8-size-stderr-sentinel"},
+            {"channel": "stdout", "text": ""},
+        ]
+        raw_payload = json.dumps(
+            payload, ensure_ascii=False, separators=(",", ":")
+        )
+        multibyte_chars = (
+            EXPECTED_MAX_RESPONSE_BYTES - len(raw_payload)
+        ) // len("é".encode("utf-8")) + 1
+        self.assertGreater(multibyte_chars, 0)
+        payload["messages"][2]["text"] = "é" * multibyte_chars
+        raw_payload = json.dumps(
+            payload, ensure_ascii=False, separators=(",", ":")
+        )
+        self.assertLess(len(raw_payload), EXPECTED_MAX_RESPONSE_BYTES)
+        self.assertGreater(
+            len(raw_payload.encode("utf-8")), EXPECTED_MAX_RESPONSE_BYTES
+        )
+
+        rejected = validate_raw(raw_payload, "build")
+        self.assertEqual(rejected.returncode, 2)
+        self.assertEqual(rejected.stdout, "")
+        self.assertEqual(
+            rejected.stderr,
+            "error: invalid adapter response: "
+            "response exceeds 1048576-byte limit\n",
+        )
+        self.assertNotIn("Traceback", rejected.stderr)
+        self.assertIsNone(rejected.validated_result)
+        self.assertNotIn(
+            "utf8-size-stdout-sentinel", rejected.stdout + rejected.stderr
+        )
+        self.assertNotIn(
+            "utf8-size-stderr-sentinel", rejected.stdout + rejected.stderr
+        )
+
     def test_controlled_failure_replays_messages_error_and_hints(self) -> None:
         payload = envelope("install", {}, ok=False)
         payload["messages"] = [

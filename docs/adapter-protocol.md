@@ -30,10 +30,10 @@ Each message object has exactly `channel` and `text`. `channel` is `stdout` or
 `stderr`. Each error object has exactly `code`, `message`, and `hints`; `hints`
 is an array of strings.
 
-Every terminal-facing string is non-empty, single-line, and contains no C0/C1
-terminal controls or surrogate code points. This rule applies to message
-`text`, error `code`, error `message`, every error hint, and every install
-verification hint.
+Every terminal-facing string is non-empty, single-line, contains no characters
+below U+0020 or in U+007F–U+009F, and contains no surrogate code points. This
+rule applies to message `text`, error `code`, error `message`, every error hint,
+and every install verification hint.
 
 After the complete response validates, messages are replayed in array order to
 their declared streams. Malformed input never replays any message.
