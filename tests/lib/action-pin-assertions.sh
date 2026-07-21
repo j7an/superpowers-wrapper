@@ -57,3 +57,11 @@ action_pin_pair() (
 assert_action_pin() {
   action_pin_pair "$1" "$2" >/dev/null
 }
+
+find_literal_action_pin_snapshots() {
+  awk '
+    /[[:alnum:]_.-]+\/[[:alnum:]_.\/-]+@[0-9A-Fa-f]{40}([[:space:]#"\047\\]|$)/ {
+      printf "%s:%d:%s\n", FILENAME, FNR, $0
+    }
+  ' "$@"
+}

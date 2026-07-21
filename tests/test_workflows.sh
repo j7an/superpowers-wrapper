@@ -377,6 +377,54 @@ test_workflow_pin_contracts() {
   echo "test_workflow_pin_contracts: OK"
 }
 
+test_literal_action_pin_detector() {
+  spw_test_tmpdir
+  source_file="$tmpdir/literal-pins.sh"
+  negative_file="$tmpdir/non-literal-pins.sh"
+  sha=$(printf '%040d' 1)
+  short_sha=$(printf '%039d' 1)
+  long_sha=$(printf '%041d' 1)
+
+  plain=$(printf 'assert_contains "$block" "actions/checkout@%s"' "$sha")
+  full=$(printf 'uses: actions/checkout@%s # v7.0.0' "$sha")
+  single=$(printf "uses: 'actions/checkout@%s' # v7.0.0" "$sha")
+  double=$(printf 'uses: "actions/checkout@%s" # v7.0.0' "$sha")
+  escaped=$(printf 'block="uses: \\"actions/checkout@%s\\" # v7.0.0"' "$sha")
+  printf '%s\n' "$plain" "$full" "$single" "$double" "$escaped" >"$source_file"
+
+  expected=$(printf '%s:%d:%s\n%s:%d:%s\n%s:%d:%s\n%s:%d:%s\n%s:%d:%s' \
+    "$source_file" 1 "$plain" \
+    "$source_file" 2 "$full" \
+    "$source_file" 3 "$single" \
+    "$source_file" 4 "$double" \
+    "$source_file" 5 "$escaped")
+  actual=$(find_literal_action_pin_snapshots "$source_file")
+  [ "$actual" = "$expected" ]
+
+  printf '%s\n' \
+    "HEAD_SHA=$sha" \
+    "uses: actions/checkout@$short_sha # v7.0.0" \
+    "uses: actions/checkout@$long_sha # v7.0.0" \
+    "uses: actions/checkout@v7 # v7.0.0" \
+    >"$negative_file"
+  actual=$(find_literal_action_pin_snapshots "$negative_file")
+  [ -z "$actual" ]
+
+  echo "test_literal_action_pin_detector: OK"
+}
+
+test_workflow_pin_source_policy() {
+  violations=$(find_literal_action_pin_snapshots \
+    "$root"/tests/*.sh \
+    "$root"/tests/*.py \
+    "$root"/tests/lib/*.sh)
+  if [ -n "$violations" ]; then
+    printf 'literal workflow pin snapshots found:\n%s\n' "$violations" >&2
+    return 1
+  fi
+  echo "test_workflow_pin_source_policy: OK"
+}
+
 test_ci_workflow() {
   spw_test_tmpdir
   wf="$root/.github/workflows/ci.yml"
@@ -558,6 +606,8 @@ echo "test_tag_release_workflow: OK"
 
 failed=0
 spw_section test_action_pin_helper test_action_pin_helper
+spw_section test_literal_action_pin_detector test_literal_action_pin_detector
+spw_section test_workflow_pin_source_policy test_workflow_pin_source_policy
 spw_section test_workflow_pin_contracts test_workflow_pin_contracts
 spw_section test_ci_workflow test_ci_workflow
 spw_section test_release_workflow test_release_workflow
