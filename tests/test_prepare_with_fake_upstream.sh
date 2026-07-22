@@ -255,6 +255,22 @@ git -C "$upstream" checkout -b hooks-dangling-symlink >/dev/null
 ln -s missing-target "$upstream/hooks/dangling"
 commit_hook_ref hooks-dangling-symlink "hook subtree contains dangling symlink"
 
+git -C "$upstream" checkout -b hooks-root-contained-materialized >/dev/null
+rm -rf "$upstream/hooks"
+mkdir -p "$upstream/assets/hook-root"
+printf 'materialized root target\n' > "$upstream/assets/hook-root/root-hook.txt"
+ln -s assets/hook-root "$upstream/hooks"
+set_manifest_hooks value '{"SessionStart":[]}'
+commit_hook_ref hooks-root-contained-materialized \
+  "hook root targets candidate materialized content"
+
+git -C "$upstream" checkout -b hooks-root-contained-source-only >/dev/null
+rm -rf "$upstream/hooks"
+ln -s .git "$upstream/hooks"
+set_manifest_hooks value '{"SessionStart":[]}'
+commit_hook_ref hooks-root-contained-source-only \
+  "hook root targets source only checkout content"
+
 git -C "$upstream" checkout -b hooks-root-absolute-symlink >/dev/null
 rm -rf "$upstream/hooks"
 ln -s "$tmpdir" "$upstream/hooks"
@@ -751,6 +767,23 @@ test -f "$tmpdir/out-hooks-outside-path/hooks/hooks-codex.json"
 test -f "$tmpdir/out-hooks-outside-path/hooks/session-start-codex"
 test -f "$tmpdir/out-hooks-outside-path/hooks/support/helper.txt"
 
+run_prepare_for_ref \
+  "hooks-root-contained-materialized" "out-hooks-root-contained-materialized"
+assert_manifest_json \
+  "out-hooks-root-contained-materialized" "/hooks" '{"SessionStart":[]}'
+if [ ! -L "$tmpdir/out-hooks-root-contained-materialized/hooks" ]; then
+  echo "a contained hooks root must remain a symlink in the candidate" >&2
+  exit 1
+fi
+if [ "$(readlink "$tmpdir/out-hooks-root-contained-materialized/hooks")" != \
+  "assets/hook-root" ]; then
+  echo "a contained hooks root must preserve its relative target" >&2
+  exit 1
+fi
+grep -Fxq \
+  'materialized root target' \
+  "$tmpdir/out-hooks-root-contained-materialized/hooks/root-hook.txt"
+
 run_prepare_for_ref "v6.1.0-beta.1" "out-prerelease"
 prerelease_short=$(printf '%s' "$main_commit" | cut -c 1-7)
 assert_prepare_commit "out-prerelease" "$main_commit"
@@ -827,6 +860,9 @@ assert_hook_prepare_failure \
 assert_hook_prepare_failure \
   "hooks-dangling-symlink" "out-hooks-dangling-symlink" \
   "hook materialization failed: symlink escapes or is broken"
+assert_hook_prepare_failure \
+  "hooks-root-contained-source-only" "out-hooks-root-contained-source-only" \
+  "hook materialization failed: hook subtree escapes or is broken"
 assert_hook_prepare_failure \
   "hooks-root-absolute-symlink" "out-hooks-root-absolute-symlink" \
   "hook materialization failed: absolute subtree symlink is not allowed"

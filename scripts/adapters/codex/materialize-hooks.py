@@ -175,14 +175,19 @@ def materialize(
     plan: dict[str, object], source_root: Path, candidate_root: Path
 ) -> None:
     if plan["copy_hooks_subtree"]:
-        validate_subtree_symlinks(source_root / "hooks", source_root)
-        shutil.copytree(
-            source_root / "hooks",
-            candidate_root / "hooks",
-            symlinks=True,
-            dirs_exist_ok=True,
-        )
-        validate_subtree_symlinks(candidate_root / "hooks", candidate_root)
+        source_hooks = source_root / "hooks"
+        candidate_hooks = candidate_root / "hooks"
+        validate_subtree_symlinks(source_hooks, source_root)
+        if source_hooks.is_symlink():
+            os.symlink(os.readlink(source_hooks), candidate_hooks)
+        else:
+            shutil.copytree(
+                source_hooks,
+                candidate_hooks,
+                symlinks=True,
+                dirs_exist_ok=True,
+            )
+        validate_subtree_symlinks(candidate_hooks, candidate_root)
     declared_paths = plan["declared_paths"]
     if not isinstance(declared_paths, list):
         raise ValueError("internal hook plan has invalid declared paths")
