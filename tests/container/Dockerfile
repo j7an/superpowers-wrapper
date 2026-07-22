@@ -8,7 +8,7 @@ RUN apt-get update \
 WORKDIR /opt/spw-test-tools
 COPY tests/container/package.json tests/container/package-lock.json ./
 RUN npm ci --ignore-scripts \
-    && test "$(./node_modules/.bin/codex --version | awk '{print $NF}')" = "0.144.1"
+    && test "$(./node_modules/.bin/codex --version | awk '{print $NF}')" = "0.144.6"
 
 RUN useradd --create-home --uid 10001 spw
 WORKDIR /workspace
