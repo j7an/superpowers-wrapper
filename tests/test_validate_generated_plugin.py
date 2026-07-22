@@ -480,14 +480,40 @@ class ValidatorTests(unittest.TestCase):
                         )
                         self.assertNotIn("Traceback", result.stderr)
 
+    def test_hook_subtree_follows_contained_directory_symlink(self) -> None:
+        if not hasattr(os, "symlink"):
+            self.skipTest("symlinks are unavailable")
+        self.set_hooks({"hooks": {}})
+        (self.plugin / "hooks").mkdir()
+        contained = self.plugin / "hook-targets" / "contained-directory"
+        contained.mkdir(parents=True)
+        outside = Path(self.tempdir.name) / "outside-hook.json"
+        outside.write_text('{"hooks":{}}\n', encoding="utf-8")
+        (contained / "unsafe.json").symlink_to(outside)
+        (contained / "cycle").symlink_to(".")
+        (self.plugin / "hooks" / "contained-directory").symlink_to(
+            "../hook-targets/contained-directory"
+        )
+
+        self.assert_rejected("generated hook symlink must be relative")
+
     def test_hook_subtree_accepts_contained_materialized_relative_symlink(self) -> None:
         if not hasattr(os, "symlink"):
             self.skipTest("symlinks are unavailable")
         self.set_hooks({"hooks": {}})
         self.write_hook_file("hook-targets/contained.json")
+        contained_directory = self.plugin / "hook-targets" / "contained-directory"
+        contained_directory.mkdir()
+        (contained_directory / "hook.json").write_text(
+            '{"hooks":{}}\n', encoding="utf-8"
+        )
+        (contained_directory / "cycle").symlink_to(".")
         (self.plugin / "hooks").mkdir()
         (self.plugin / "hooks" / "contained.json").symlink_to(
             "../hook-targets/contained.json"
+        )
+        (self.plugin / "hooks" / "contained-directory").symlink_to(
+            "../hook-targets/contained-directory"
         )
         result = self.run_validator()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)

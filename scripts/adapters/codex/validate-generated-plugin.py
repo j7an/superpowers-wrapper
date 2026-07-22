@@ -316,11 +316,31 @@ def validate_hook_subtree(
 
     if not validate_symlink(hooks_root):
         return
-    try:
-        for path in hooks_root.rglob("*"):
-            validate_symlink(path)
-    except OSError:
-        errors.append("generated hook subtree could not be inspected")
+    pending = [hooks_root]
+    visited_directories: set[Path] = set()
+    while pending:
+        directory = pending.pop()
+        try:
+            resolved_directory = directory.resolve(strict=True)
+        except (OSError, RuntimeError, ValueError):
+            errors.append("generated hook subtree could not be inspected")
+            continue
+        if resolved_directory in visited_directories:
+            continue
+        visited_directories.add(resolved_directory)
+        try:
+            children = list(directory.iterdir())
+        except OSError:
+            errors.append("generated hook subtree could not be inspected")
+            continue
+        for path in children:
+            if not validate_symlink(path):
+                continue
+            try:
+                if path.is_dir():
+                    pending.append(path)
+            except (OSError, RuntimeError, ValueError):
+                errors.append("generated hook subtree could not be inspected")
 
 
 def validate_tree(plugin_root: Path, hook_policy: str, errors: list[str]) -> None:
