@@ -12,7 +12,6 @@ marketplace_name="superpowers-manager-probe"
 plugin_name="manager-probe"
 plugin_id="${plugin_name}@${marketplace_name}"
 probe_root="${TMPDIR:-/tmp}/superpowers-manager-codex-probe"
-sentinel="${TMPDIR:-/tmp}/superpowers-manager-hook-probe-ran"
 
 codex_bin="${CODEX_BIN:-codex}"
 
@@ -28,7 +27,6 @@ write_probe_plugin() {
   mkdir -p "$probe_root/.agents/plugins"
   mkdir -p "$probe_root/plugins/$plugin_name/.codex-plugin"
   mkdir -p "$probe_root/plugins/$plugin_name/skills/probe"
-  mkdir -p "$probe_root/plugins/$plugin_name/hooks"
 
   cat > "$probe_root/.agents/plugins/marketplace.json" <<JSON
 {
@@ -66,7 +64,7 @@ JSON
   "interface": {
     "displayName": "Manager Probe",
     "shortDescription": "Local marketplace behavior probe.",
-    "longDescription": "A temporary plugin used to observe Codex local marketplace refresh, cache, and hook behavior.",
+    "longDescription": "A temporary plugin used to observe Codex local marketplace refresh, cache, and version-precedence behavior.",
     "developerName": "superpowers-manager",
     "category": "Developer Tools",
     "capabilities": ["skills"],
@@ -94,11 +92,6 @@ EOF
 }
 JSON
 
-  cat > "$probe_root/plugins/$plugin_name/hooks/session-start-codex" <<EOF
-#!/bin/sh
-printf '%s\n' "$commit" >> "$sentinel"
-EOF
-  chmod +x "$probe_root/plugins/$plugin_name/hooks/session-start-codex"
 }
 
 find_installed_metadata() {
@@ -116,7 +109,6 @@ PY
 
 cleanup
 trap cleanup EXIT INT TERM
-rm -f "$sentinel"
 
 echo "Q1/Q2/Q3 probe root: $probe_root"
 write_probe_plugin "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" "0.0.0+probe.a"
@@ -192,24 +184,4 @@ if [ -d "$branch_root" ]; then
   printf '%s\n' "$branch_root"
 else
   echo "not found"
-fi
-
-echo "Hook sentinel before new-session probe:"
-if [ -f "$sentinel" ]; then
-  cat "$sentinel"
-else
-  echo "not written"
-fi
-
-if "$codex_bin" exec --help >/dev/null 2>&1; then
-  echo "Run a noninteractive session to check hook activation"
-  "$codex_bin" exec "Respond with manager probe check." >/dev/null 2>&1 || true
-  echo "Hook sentinel after codex exec:"
-  if [ -f "$sentinel" ]; then
-    cat "$sentinel"
-  else
-    echo "not written"
-  fi
-else
-  echo "codex exec unavailable; check hook activation from a fresh interactive Codex session."
 fi
