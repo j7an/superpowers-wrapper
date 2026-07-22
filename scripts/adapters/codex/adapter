@@ -229,6 +229,19 @@ spw_codex_build() {
     fi
   fi
 
+  if ! spw_codex_capture_command \
+    "$messages_file" \
+    "$scratch/hook-materialize.stdout" \
+    "$scratch/hook-materialize.stderr" \
+    python3 -S "$root/scripts/adapters/codex/materialize-hooks.py" \
+      --manifest "$candidate_manifest" \
+      --manifest-source "$manifest_source" \
+      --upstream-root "$upstream_root" \
+      --candidate-root "$candidate_root"; then
+    spw_codex_failure build "build-failed" \
+      "failed to prepare upstream Codex hooks" "" "$messages_file"
+  fi
+
   if ! spw_apply_manifest_overlay "$candidate_manifest" "$manager_version"; then
     spw_codex_failure build "build-failed" "failed to apply manager manifest overlay" "" "$messages_file"
   fi

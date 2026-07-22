@@ -292,7 +292,6 @@ if not isinstance(data, dict):
 
 data["version"] = version
 data["skills"] = "./skills/"
-data.pop("hooks", None)
 
 try:
     with open(path, "w", encoding="utf-8") as f:

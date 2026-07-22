@@ -10,6 +10,7 @@ package.json
 plugins/superpowers/.codex-plugin/plugin.template.json
 scripts/adapters/codex/adapter
 scripts/adapters/codex/lib.sh
+scripts/adapters/codex/materialize-hooks.py
 scripts/adapters/codex/validate-generated-plugin.py
 scripts/core/adapter.sh
 scripts/core/common.sh

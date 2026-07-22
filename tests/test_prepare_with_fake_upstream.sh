@@ -20,6 +20,26 @@ git_tool_path="$tmpdir/git-tool-path"
 python3_log="$tmpdir/python3.log"
 real_python3=$(command -v python3)
 real_git=$(command -v git)
+materializer="$root/scripts/adapters/codex/materialize-hooks.py"
+grep -Fxq 'from __future__ import annotations' "$materializer"
+
+system_python=/usr/bin/python3
+if [ -x "$system_python" ]; then
+  system_python_version=$(
+    "$system_python" -S -c 'import sys; print("%d.%d" % sys.version_info[:2])'
+  )
+  if [ "$system_python_version" = "3.9" ]; then
+    "$system_python" -S -c '
+import runpy
+import sys
+
+assert sys.version_info[:2] == (3, 9)
+materializer = sys.argv[1]
+sys.argv = [materializer, "--help"]
+runpy.run_path(materializer, run_name="__main__")
+' "$materializer" >/dev/null
+  fi
+fi
 
 cat > "$recording_adapter" <<'EOF'
 #!/bin/sh
@@ -76,6 +96,8 @@ description: Fake upstream skill
 EOF
 printf 'asset\n' > "$upstream/assets/superpowers-small.svg"
 printf '#!/bin/sh\n' > "$upstream/hooks/session-start-codex"
+mkdir -p "$upstream/hooks/support"
+printf 'hook support\n' > "$upstream/hooks/support/helper.txt"
 printf 'license\n' > "$upstream/LICENSE"
 printf 'readme\n' > "$upstream/README.md"
 printf 'code\n' > "$upstream/CODE_OF_CONDUCT.md"
@@ -95,6 +117,16 @@ cat > "$upstream/.codex-plugin/plugin.json" <<'JSON'
   "x_future_manifest": {
     "preserved": true,
     "items": [1, "two"]
+  }
+}
+JSON
+cat > "$upstream/hooks/hooks-codex.json" <<'JSON'
+{
+  "hooks": {
+    "SessionStart": [{
+      "matcher": "startup|resume|clear|compact",
+      "hooks": [{"type": "command", "command": "sh \"${PLUGIN_ROOT}/hooks/session-start-codex\""}]
+    }]
   }
 }
 JSON
@@ -121,6 +153,125 @@ EOF
 git -C "$upstream" add skills/brainstorming/SKILL.md
 spw_git_commit "$upstream" "invalid skill frontmatter"
 git -C "$upstream" checkout main >/dev/null
+
+set_manifest_hooks() {
+  mode="$1"
+  value="${2:-}"
+  python3 -S - "$upstream/.codex-plugin/plugin.json" "$mode" "$value" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+mode = sys.argv[2]
+with path.open(encoding="utf-8") as handle:
+    manifest = json.load(handle)
+if mode == "absent":
+    manifest.pop("hooks", None)
+else:
+    manifest["hooks"] = json.loads(sys.argv[3])
+with path.open("w", encoding="utf-8") as handle:
+    json.dump(manifest, handle, indent=2, allow_nan=False)
+    handle.write("\n")
+PY
+}
+
+commit_hook_ref() {
+  ref="$1"
+  message="$2"
+  git -C "$upstream" add -A
+  spw_git_commit "$upstream" "$message"
+  git -C "$upstream" checkout main >/dev/null
+}
+
+git -C "$upstream" checkout -b hooks-empty-object >/dev/null
+set_manifest_hooks value '{}'
+commit_hook_ref hooks-empty-object "manifest explicitly disables hooks"
+
+git -C "$upstream" checkout -b hooks-inline >/dev/null
+set_manifest_hooks value '{"SessionStart":[{"hooks":[{"type":"command","command":"echo inline"}]}]}'
+commit_hook_ref hooks-inline "manifest declares inline hooks"
+
+git -C "$upstream" checkout -b hooks-default >/dev/null
+set_manifest_hooks absent
+cp "$upstream/hooks/hooks-codex.json" "$upstream/hooks/hooks.json"
+commit_hook_ref hooks-default "manifest uses default hook discovery"
+
+git -C "$upstream" checkout -b hooks-absent >/dev/null
+set_manifest_hooks absent
+commit_hook_ref hooks-absent "manifest omits hooks without a default config"
+
+git -C "$upstream" checkout -b hooks-outside-path >/dev/null
+set_manifest_hooks value '"./config/hooks-codex.json"'
+mkdir -p "$upstream/config"
+cp "$upstream/hooks/hooks-codex.json" "$upstream/config/hooks-codex.json"
+commit_hook_ref hooks-outside-path "manifest declares hook config outside hooks subtree"
+
+git -C "$upstream" checkout -b hooks-scalar >/dev/null
+set_manifest_hooks value '42'
+commit_hook_ref hooks-scalar "manifest declares scalar hooks"
+
+git -C "$upstream" checkout -b hooks-mixed-array >/dev/null
+set_manifest_hooks value '["./hooks/hooks-codex.json",{}]'
+commit_hook_ref hooks-mixed-array "manifest declares mixed hooks array"
+
+git -C "$upstream" checkout -b hooks-unprefixed >/dev/null
+set_manifest_hooks value '"hooks/hooks-codex.json"'
+commit_hook_ref hooks-unprefixed "manifest declares unprefixed hook path"
+
+git -C "$upstream" checkout -b hooks-absolute >/dev/null
+set_manifest_hooks value '"/tmp/hooks-codex.json"'
+commit_hook_ref hooks-absolute "manifest declares absolute hook path"
+
+git -C "$upstream" checkout -b hooks-traversal >/dev/null
+set_manifest_hooks value '"./../outside-hooks.json"'
+commit_hook_ref hooks-traversal "manifest declares traversing hook path"
+
+git -C "$upstream" checkout -b hooks-missing >/dev/null
+set_manifest_hooks value '"./hooks/missing.json"'
+commit_hook_ref hooks-missing "manifest declares missing hook file"
+
+git -C "$upstream" checkout -b hooks-directory >/dev/null
+set_manifest_hooks value '"./hooks"'
+commit_hook_ref hooks-directory "manifest declares hook directory as file"
+
+git -C "$upstream" checkout -b hooks-declared-symlink-escape >/dev/null
+set_manifest_hooks value '"./hooks/declared-escape"'
+ln -s "$tmpdir/outside-declared-hook" "$upstream/hooks/declared-escape"
+printf 'outside declared hook\n' > "$tmpdir/outside-declared-hook"
+commit_hook_ref hooks-declared-symlink-escape "declared hook symlink escapes upstream"
+
+git -C "$upstream" checkout -b hooks-subtree-symlink-escape >/dev/null
+ln -s ../../outside "$upstream/hooks/escape"
+commit_hook_ref hooks-subtree-symlink-escape "hook subtree contains escaping symlink"
+
+git -C "$upstream" checkout -b hooks-contained-symlink >/dev/null
+mkdir -p "$upstream/bin"
+printf 'contained target\n' > "$upstream/bin/target"
+ln -s ../bin/target "$upstream/hooks/contained"
+commit_hook_ref hooks-contained-symlink "hook subtree contains source-contained symlink"
+
+git -C "$upstream" checkout -b hooks-dangling-symlink >/dev/null
+ln -s missing-target "$upstream/hooks/dangling"
+commit_hook_ref hooks-dangling-symlink "hook subtree contains dangling symlink"
+
+git -C "$upstream" checkout -b hooks-root-absolute-symlink >/dev/null
+rm -rf "$upstream/hooks"
+ln -s "$tmpdir" "$upstream/hooks"
+set_manifest_hooks value '{"SessionStart":[]}'
+commit_hook_ref hooks-root-absolute-symlink "hook root is an absolute symlink"
+
+git -C "$upstream" checkout -b hooks-root-broken-symlink >/dev/null
+rm -rf "$upstream/hooks"
+ln -s missing-hooks "$upstream/hooks"
+set_manifest_hooks value '{"SessionStart":[]}'
+commit_hook_ref hooks-root-broken-symlink "hook root is a broken relative symlink"
+
+git -C "$upstream" checkout -b hooks-root-escape-symlink >/dev/null
+rm -rf "$upstream/hooks"
+ln -s .. "$upstream/hooks"
+set_manifest_hooks value '{"SessionStart":[]}'
+commit_hook_ref hooks-root-escape-symlink "hook root is an escaping relative symlink"
 
 git -C "$upstream" checkout -b nonstandard-json >/dev/null
 python3 - "$upstream/.codex-plugin/plugin.json" <<'PY'
@@ -229,6 +380,39 @@ run_prepare_for_ref_with_env() {
 
 run_prepare_for_ref() {
   run_prepare_for_ref_with_env "$1" "$2"
+}
+
+assert_hook_prepare_failure() {
+  ref="$1"
+  destination="$2"
+  expected="$3"
+  err="$tmpdir/$destination.err"
+  mkdir -p "$tmpdir/$destination"
+  printf 'preserve me\n' > "$tmpdir/$destination/preexisting-sentinel"
+  if SUPERPOWERS_REF="$ref" \
+    SUPERPOWERS_UPSTREAM_URL="$upstream" \
+    SUPERPOWERS_CACHE_DIR="$tmpdir/cache-$destination" \
+    SUPERPOWERS_PLUGIN_ROOT="$tmpdir/$destination" \
+    SUPERPOWERS_VALIDATOR= \
+    HOME="$home" \
+    sh "$root/scripts/prepare" >"$tmpdir/$destination.out" 2>"$err"; then
+    echo "prepare unexpectedly accepted invalid hook packaging: $ref" >&2
+    exit 1
+  fi
+  if ! grep -Fq "$expected" "$err"; then
+    echo "hook packaging error did not contain expected diagnostic: $expected" >&2
+    cat "$err" >&2
+    exit 1
+  fi
+  if grep -q 'Traceback' "$err"; then
+    echo "hook packaging error must not include a Python traceback" >&2
+    cat "$err" >&2
+    exit 1
+  fi
+  [ -f "$tmpdir/$destination/preexisting-sentinel" ] || {
+    echo "hook packaging failure must preserve the previous generated tree" >&2
+    exit 1
+  }
 }
 
 assert_bad_manifest_error() {
@@ -523,6 +707,49 @@ assert_manifest_json \
 assert_manifest_json "out-latest" "/skills" "$(json_string "./skills/")"
 assert_manifest_json \
   "out-latest" "/x_future_manifest" '{"items":[1,"two"],"preserved":true}'
+assert_manifest_json \
+  "out-latest" "/hooks" "$(json_string "./hooks/hooks-codex.json")"
+test -f "$tmpdir/out-latest/hooks/hooks-codex.json"
+test -f "$tmpdir/out-latest/hooks/session-start-codex"
+test -f "$tmpdir/out-latest/hooks/support/helper.txt"
+
+run_prepare_for_ref "hooks-empty-object" "out-hooks-empty-object"
+assert_manifest_json "out-hooks-empty-object" "/hooks" '{}'
+if [ -e "$tmpdir/out-hooks-empty-object/hooks" ]; then
+  echo "an exact empty hooks object must not copy the hooks subtree" >&2
+  exit 1
+fi
+
+run_prepare_for_ref "hooks-inline" "out-hooks-inline"
+assert_manifest_json \
+  "out-hooks-inline" "/hooks" \
+  '{"SessionStart":[{"hooks":[{"command":"echo inline","type":"command"}]}]}'
+test -f "$tmpdir/out-hooks-inline/hooks/hooks-codex.json"
+test -f "$tmpdir/out-hooks-inline/hooks/session-start-codex"
+test -f "$tmpdir/out-hooks-inline/hooks/support/helper.txt"
+
+run_prepare_for_ref "hooks-default" "out-hooks-default"
+assert_manifest_lacks_key "out-hooks-default" "hooks"
+test -f "$tmpdir/out-hooks-default/hooks/hooks.json"
+test -f "$tmpdir/out-hooks-default/hooks/hooks-codex.json"
+test -f "$tmpdir/out-hooks-default/hooks/session-start-codex"
+test -f "$tmpdir/out-hooks-default/hooks/support/helper.txt"
+
+run_prepare_for_ref "hooks-absent" "out-hooks-absent"
+assert_manifest_lacks_key "out-hooks-absent" "hooks"
+if [ -e "$tmpdir/out-hooks-absent/hooks" ]; then
+  echo "an absent declaration without hooks/hooks.json must not copy hooks" >&2
+  exit 1
+fi
+
+run_prepare_for_ref "hooks-outside-path" "out-hooks-outside-path"
+assert_manifest_json \
+  "out-hooks-outside-path" "/hooks" \
+  "$(json_string "./config/hooks-codex.json")"
+test -f "$tmpdir/out-hooks-outside-path/config/hooks-codex.json"
+test -f "$tmpdir/out-hooks-outside-path/hooks/hooks-codex.json"
+test -f "$tmpdir/out-hooks-outside-path/hooks/session-start-codex"
+test -f "$tmpdir/out-hooks-outside-path/hooks/support/helper.txt"
 
 run_prepare_for_ref "v6.1.0-beta.1" "out-prerelease"
 prerelease_short=$(printf '%s' "$main_commit" | cut -c 1-7)
@@ -567,6 +794,49 @@ assert_rejected_manifest_input "unreadable-manifest" "out-unreadable-manifest" "
 assert_rejected_manifest_input "unencodable-manifest-version" "out-unencodable-version" "cannot output JSON value from"
 assert_rejected_manifest_input "deeply-nested-json" "out-deeply-nested" "JSON nesting exceeds limit in"
 
+assert_hook_prepare_failure \
+  "hooks-scalar" "out-hooks-scalar" \
+  "hook classification failed: unsupported or mixed hooks declaration"
+assert_hook_prepare_failure \
+  "hooks-mixed-array" "out-hooks-mixed-array" \
+  "hook classification failed: unsupported or mixed hooks declaration"
+assert_hook_prepare_failure \
+  "hooks-unprefixed" "out-hooks-unprefixed" \
+  "hook classification failed: declared hook path must start with ./"
+assert_hook_prepare_failure \
+  "hooks-absolute" "out-hooks-absolute" \
+  "hook classification failed: declared hook path must start with ./"
+assert_hook_prepare_failure \
+  "hooks-traversal" "out-hooks-traversal" \
+  "hook classification failed: declared hook source escapes or could not be resolved"
+assert_hook_prepare_failure \
+  "hooks-missing" "out-hooks-missing" \
+  "hook classification failed: declared hook source escapes or could not be resolved"
+assert_hook_prepare_failure \
+  "hooks-directory" "out-hooks-directory" \
+  "hook classification failed: declared hook source is not a regular file"
+assert_hook_prepare_failure \
+  "hooks-declared-symlink-escape" "out-hooks-declared-symlink-escape" \
+  "hook classification failed: declared hook source escapes or could not be resolved"
+assert_hook_prepare_failure \
+  "hooks-subtree-symlink-escape" "out-hooks-subtree-symlink-escape" \
+  "hook materialization failed: symlink escapes or is broken"
+assert_hook_prepare_failure \
+  "hooks-contained-symlink" "out-hooks-contained-symlink" \
+  "hook materialization failed: symlink escapes or is broken"
+assert_hook_prepare_failure \
+  "hooks-dangling-symlink" "out-hooks-dangling-symlink" \
+  "hook materialization failed: symlink escapes or is broken"
+assert_hook_prepare_failure \
+  "hooks-root-absolute-symlink" "out-hooks-root-absolute-symlink" \
+  "hook materialization failed: absolute subtree symlink is not allowed"
+assert_hook_prepare_failure \
+  "hooks-root-broken-symlink" "out-hooks-root-broken-symlink" \
+  "hook materialization failed: hook subtree escapes or is broken"
+assert_hook_prepare_failure \
+  "hooks-root-escape-symlink" "out-hooks-root-escape-symlink" \
+  "hook materialization failed: hook subtree escapes or is broken"
+
 unreadable_json="$tmpdir/json-directory"
 mkdir "$unreadable_json"
 printf 'sentinel\n' > "$unreadable_json/sentinel"
@@ -588,12 +858,9 @@ manifest="$output/.codex-plugin/plugin.json"
 
 test -f "$output/skills/brainstorming/SKILL.md"
 test -f "$output/assets/superpowers-small.svg"
-# The fake upstream ships hooks/, but the manager's generated-tree contract is
-# deliberately hook-free: no manifest hooks key and no physical hooks/ directory.
-if [ -e "$output/hooks" ]; then
-  echo "generated plugin must not contain a hooks/ directory" >&2
-  exit 1
-fi
+test -f "$output/hooks/hooks-codex.json"
+test -f "$output/hooks/session-start-codex"
+test -f "$output/hooks/support/helper.txt"
 test -f "$output/LICENSE"
 test -f "$output/README.md"
 test -f "$output/CODE_OF_CONDUCT.md"
@@ -602,7 +869,8 @@ test -f "$output/CODE_OF_CONDUCT.md"
 # in the plugin root); otherwise a real prepare would delete it.
 test -f "$output/.codex-plugin/plugin.template.json"
 
-assert_manifest_lacks_key "out-latest" "hooks"
+assert_manifest_json \
+  "out-latest" "/hooks" "$(json_string "./hooks/hooks-codex.json")"
 
 # Empty HOME and an unset/empty override must use only the shipped validator.
 if [ -e "$home/.codex/skills/.system/plugin-creator/scripts/validate_plugin.py" ]; then
