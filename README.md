@@ -19,7 +19,7 @@ npx superpowers-manager update
 Use the official marketplace for the simplest native Codex installation. Use
 Superpowers Manager when you want immediate stable-upstream freshness after a
 user-triggered install/update, per-invocation release or commit selection,
-recorded upstream provenance, diagnostics, Codex-specific hook-free packaging,
+recorded upstream provenance, diagnostics, upstream-owned Codex hook handling,
 and explicit install/update/probe/uninstall lifecycle control.
 
 | Choose | Best fit |
@@ -60,8 +60,8 @@ updates.
 - Resolves an upstream ref, defaulting to the latest stable `vX.Y.Z` release
   tag.
 - Clones/fetches upstream at that commit and assembles a Codex plugin tree under
-  `plugins/superpowers/` (skills, assets, license/readme, and manifest;
-  upstream's `hooks/` directory is deliberately excluded).
+  `plugins/superpowers/` (skills, assets, license/readme, manifest, and any
+  hook files that the upstream manifest allows).
 - Stamps the generated manifest with a ref-aware manager version ending in
   `+manager.<short-sha>` and writes the upstream provenance to
   `.superpowers-upstream.json`.
@@ -71,12 +71,22 @@ updates.
 - Registers the `superpowers-manager` marketplace and installs or refreshes
   `superpowers@superpowers-manager` in Codex.
 
-The generated plugin carries upstream skills, assets, and documentation. The
-manager excludes upstream `hooks/`, removes the manifest `hooks` field, and
-validates that both stay absent. This is a Codex-specific adapter policy, not a
-claim about how Superpowers should be packaged for future or other harnesses.
-Changing the hook-free policy requires a separate design and current
-compatibility evidence.
+The generated plugin carries upstream skills, assets, documentation, and the
+upstream-owned hook policy. When upstream provides a Codex manifest, its
+`hooks` declaration is preserved: exact `{}` suppresses the `hooks/` subtree;
+active declarations conditionally materialize the upstream hook files; and a
+missing `hooks` key or explicit empty array (`[]`) declaration uses Codex's
+default discovery only when upstream ships `hooks/hooks.json`. Manifest-less
+fallback refs use the committed minimal template and generate neither a manifest
+`hooks` key nor a `hooks/` directory.
+The manager never creates its own hooks or mutates Codex trust state.
+
+Review upstream hook command definitions with Codex's `/hooks` flow. Codex
+trust applies to a command definition, not to the contents of scripts that the
+definition references. An explicit update of an older pin can therefore change
+the contents of a trusted referenced script, or reveal a newly untrusted
+upstream definition; review it before trusting or running it. This policy
+eliminates latent hook-policy drift.
 
 ## Runtime architecture
 
@@ -218,15 +228,17 @@ updates the official provider or any other provider automatically.
 
 - **Upstream manifest first:** when upstream provides
   `.codex-plugin/plugin.json`, `prepare` uses it as the generated manifest base
-  so future upstream metadata fields are preserved by default.
+  so future upstream metadata fields, including its hook declaration, are
+  preserved by default.
 - **Fallback template:** `plugins/superpowers/.codex-plugin/plugin.template.json`
   is committed as a minimal fallback for older upstream refs that do not ship a
   Codex manifest. It carries the placeholder version
-  `0.0.0+manager.template`.
+  `0.0.0+manager.template`, declares no hooks, and produces no `hooks/`
+  directory.
 - **Manager overlay:** `prepare` replaces the version with a ref-aware manager
-  version, forces `skills` to `./skills/`, and enforces the manager's current
-  hook-free policy: no manifest `hooks` key and no copied `hooks/` directory.
-  Unknown upstream manifest fields remain preserved.
+  version and forces `skills` to `./skills/`. Unknown upstream manifest fields,
+  including `hooks`, remain preserved; the adapter materializes hook files only
+  according to the upstream declaration.
 - Stable tags generate release-looking versions such as
   `6.0.3+manager.896224c`; explicit prerelease tags generate versions such as
   `6.1.0-beta.1+manager.abc1234`.
@@ -273,10 +285,13 @@ an isolated container home with networking disabled. That container run may
 mutate the throwaway container-local Codex state, but it still performs no
 mutation of the developer's or runner's real Codex state.
 
+The container probe uses Codex's `hooks/list` only as compatibility evidence
+for the tested Codex build. It is not a stable Superpowers Manager API.
+
 The manual probe is opt-in and covers native-only compatibility residue such as
-path/cache behavior against an intentionally real local Codex install. It is
-not part of acceptance. GitHub Actions runs the blocking container acceptance
-command on pull requests and pushes to `main`.
+path/cache and version-precedence behavior against an intentionally real local
+Codex install. It is not part of acceptance. GitHub Actions runs the blocking
+container acceptance command on pull requests and pushes to `main`.
 
 ## Repository layout
 

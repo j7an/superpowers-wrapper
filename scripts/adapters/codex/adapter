@@ -218,13 +218,28 @@ spw_codex_build() {
 
   upstream_manifest="$upstream_root/.codex-plugin/plugin.json"
   if [ -f "$upstream_manifest" ]; then
+    manifest_source=upstream
     if ! cp "$upstream_manifest" "$candidate_manifest"; then
       spw_codex_failure build "build-failed" "cannot copy upstream manifest into candidate" "" "$messages_file"
     fi
   else
+    manifest_source=fallback
     if ! cp "$fallback_manifest" "$candidate_manifest"; then
       spw_codex_failure build "build-failed" "cannot copy fallback manifest into candidate" "" "$messages_file"
     fi
+  fi
+
+  if ! spw_codex_capture_command \
+    "$messages_file" \
+    "$scratch/hook-materialize.stdout" \
+    "$scratch/hook-materialize.stderr" \
+    python3 -S "$root/scripts/adapters/codex/materialize-hooks.py" \
+      --manifest "$candidate_manifest" \
+      --manifest-source "$manifest_source" \
+      --upstream-root "$upstream_root" \
+      --candidate-root "$candidate_root"; then
+    spw_codex_failure build "build-failed" \
+      "failed to prepare upstream Codex hooks" "" "$messages_file"
   fi
 
   if ! spw_apply_manifest_overlay "$candidate_manifest" "$manager_version"; then
@@ -246,6 +261,7 @@ spw_codex_build() {
     --resolved-ref "$resolved_ref" \
     --commit "$commit" \
     --manifest-version "$manager_version" \
+    --manifest-source "$manifest_source" \
     --upstream-manifest-version "$upstream_manifest_version" \
     >"$stdout_file" 2>"$stderr_file"; then
     spw_codex_append_messages "$messages_file" stdout "$stdout_file"

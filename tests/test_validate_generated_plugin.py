@@ -25,6 +25,7 @@ class ValidatorTests(unittest.TestCase):
         self.tempdir = tempfile.TemporaryDirectory()
         self.addCleanup(self.tempdir.cleanup)
         self.plugin = Path(self.tempdir.name) / "plugin"
+        self.manifest_source = "upstream"
         self.expected = {
             "source": SOURCE,
             "requested_ref": "latest-release",
@@ -72,6 +73,16 @@ class ValidatorTests(unittest.TestCase):
             (self.plugin / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8")
         )
 
+    def write_hook_file(self, relative: str = "hooks/hooks-codex.json") -> None:
+        path = self.plugin / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text('{"hooks":{}}\n', encoding="utf-8")
+
+    def set_hooks(self, value: Any) -> None:
+        manifest = self.read_manifest()
+        manifest["hooks"] = value
+        self.write_manifest(manifest)
+
     def write_metadata(self, value: Any | None = None) -> None:
         if value is None:
             value = {
@@ -102,6 +113,8 @@ class ValidatorTests(unittest.TestCase):
             self.expected["commit"],
             "--manifest-version",
             self.expected["manifest_version"],
+            "--manifest-source",
+            self.manifest_source,
             "--upstream-manifest-version",
             self.expected["upstream_manifest_version"],
         ]
@@ -111,6 +124,20 @@ class ValidatorTests(unittest.TestCase):
         result = self.run_validator()
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn(fragment, result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+
+    def assert_rejected_all(self, *fragments: str) -> None:
+        result = self.run_validator()
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        for fragment in fragments:
+            self.assertIn(fragment, result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+
+    def test_manifest_source_rejects_invalid_choice_without_traceback(self) -> None:
+        self.manifest_source = "invalid"
+        result = self.run_validator()
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("--manifest-source", result.stderr)
         self.assertNotIn("Traceback", result.stderr)
 
     def test_valid_candidate_and_unknown_manifest_field_pass(self) -> None:
@@ -180,7 +207,7 @@ class ValidatorTests(unittest.TestCase):
         validate_tree = runpy.run_path(str(VALIDATOR))["validate_tree"]
         errors: list[str] = []
         with mock.patch.object(Path, "iterdir", side_effect=OSError("fixture error")):
-            validate_tree(self.plugin, errors)
+            validate_tree(self.plugin, "forbid", errors)
         self.assertIn("skills directory could not be enumerated", errors)
 
     def test_manifest_json_shape_and_owned_fields_fail_closed(self) -> None:
@@ -199,7 +226,6 @@ class ValidatorTests(unittest.TestCase):
             ("bad-semver", {"version": "01.0.0"}, "must be SemVer 2.0.0"),
             ("empty-description", {"description": ""}, "field `description`"),
             ("wrong-skills", {"skills": "skills"}, "field `skills` must equal `./skills/`"),
-            ("hooks", {"hooks": "./hooks.json"}, "field `hooks` must be absent"),
         )
         for label, change, fragment in cases:
             with self.subTest(label=label):
@@ -263,7 +289,234 @@ class ValidatorTests(unittest.TestCase):
 
         self.reset_candidate()
         (self.plugin / "hooks").mkdir()
-        self.assert_rejected("must not contain `hooks/`")
+        self.assert_rejected("default-discovered `hooks/` must contain `hooks/hooks.json`")
+
+    def test_upstream_hook_shapes_are_accepted(self) -> None:
+        cases: tuple[tuple[str, Any, tuple[str, ...]], ...] = (
+            ("exact-empty-object", {}, ()),
+            ("single-path", "./hooks/hooks-codex.json", ("hooks/hooks-codex.json",)),
+            (
+                "path-array",
+                ["./hooks/first.json", "./hooks/second.json"],
+                ("hooks/first.json", "hooks/second.json"),
+            ),
+            (
+                "inline-object",
+                {
+                    "hooks": {
+                        "SessionStart": [
+                            {"hooks": [{"type": "prompt", "prompt": "opaque"}]}
+                        ],
+                        "Stop": [
+                            {"hooks": [{"type": "agent", "agent": "opaque"}]}
+                        ],
+                    }
+                },
+                ("hooks/required-by-inline.json",),
+            ),
+            (
+                "inline-object-array",
+                [{"hooks": {}}, {"future": {"preserved": True}}],
+                ("hooks/required-by-array.json",),
+            ),
+            ("empty-array", [], ("hooks/hooks.json",)),
+        )
+        for label, hooks, files in cases:
+            with self.subTest(label=label):
+                self.reset_candidate()
+                self.set_hooks(hooks)
+                for relative in files:
+                    self.write_hook_file(relative)
+                manifest = self.read_manifest()
+                manifest["x_unknown_alongside_hooks"] = {"preserved": True}
+                self.write_manifest(manifest)
+                result = self.run_validator()
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_hook_policy_is_source_sensitive_and_fail_closed(self) -> None:
+        self.manifest_source = "fallback"
+        self.set_hooks({"future": True})
+        self.assert_rejected("fallback plugin manifest field `hooks` must be absent")
+
+        self.reset_candidate()
+        self.manifest_source = "fallback"
+        self.write_hook_file()
+        self.assert_rejected("generated plugin must not contain `hooks/` for this manifest source")
+
+        self.reset_candidate()
+        self.manifest_source = "fallback"
+        self.set_hooks({})
+        self.write_hook_file()
+        self.assert_rejected_all(
+            "fallback plugin manifest field `hooks` must be absent",
+            "generated plugin must not contain `hooks/` for this manifest source",
+        )
+
+        self.reset_candidate()
+        self.manifest_source = "upstream"
+        manifest = self.read_manifest()
+        manifest.pop("interface")
+        manifest["hooks"] = {}
+        self.write_manifest(manifest)
+        self.write_hook_file()
+        self.assert_rejected("generated plugin must not contain `hooks/` for this manifest source")
+
+        self.reset_candidate()
+        self.set_hooks({})
+        manifest = self.read_manifest()
+        manifest["interface"] = "not-an-object"
+        self.write_manifest(manifest)
+        self.write_hook_file()
+        self.assert_rejected_all(
+            "plugin manifest field `interface` must be an object",
+            "generated plugin must not contain `hooks/` for this manifest source",
+        )
+
+    def test_hook_declarations_reject_unsupported_or_unsafe_values(self) -> None:
+        cases: tuple[tuple[str, Any, str], ...] = (
+            ("unsupported-scalar", 17, "field `hooks` has an unsupported type"),
+            (
+                "mixed-array",
+                ["./hooks/hooks-codex.json", {"hooks": {}}],
+                "field `hooks` array must contain only paths or only objects",
+            ),
+            ("missing-dot-slash", "hooks/hooks-codex.json", "must start with `./`"),
+            ("absolute", "/tmp/hooks.json", "must start with `./`"),
+            ("traversal", "./../outside.json", "escapes the plugin root"),
+            ("missing", "./hooks/missing.json", "does not exist"),
+        )
+        for label, hooks, fragment in cases:
+            with self.subTest(label=label):
+                self.reset_candidate()
+                self.set_hooks(hooks)
+                self.assert_rejected(fragment)
+
+        self.reset_candidate()
+        (self.plugin / "hooks" / "directory.json").mkdir(parents=True)
+        self.set_hooks("./hooks/directory.json")
+        self.assert_rejected("target `./hooks/directory.json` must be a file")
+
+        if hasattr(os, "symlink"):
+            self.reset_candidate()
+            outside = Path(self.tempdir.name) / "outside-hooks.json"
+            outside.write_text('{"hooks":{}}\n', encoding="utf-8")
+            (self.plugin / "hooks").mkdir()
+            (self.plugin / "hooks" / "escape.json").symlink_to(outside)
+            self.set_hooks("./hooks/escape.json")
+            self.assert_rejected("escapes the plugin root")
+
+    def test_manifest_failures_preserve_physical_hook_prohibition(self) -> None:
+        manifest_path = self.plugin / ".codex-plugin" / "plugin.json"
+        manifest_path.unlink()
+        self.write_hook_file()
+        self.assert_rejected_all(
+            "missing required file `.codex-plugin/plugin.json`",
+            "generated plugin must not contain `hooks/` for this manifest source",
+        )
+
+        self.reset_candidate()
+        manifest_path.write_text("{bad", encoding="utf-8")
+        self.write_hook_file()
+        self.assert_rejected_all(
+            "plugin manifest must contain valid JSON",
+            "generated plugin must not contain `hooks/` for this manifest source",
+        )
+
+    def test_default_discovery_requires_hooks_json(self) -> None:
+        self.write_hook_file("hooks/hooks.json")
+        result = self.run_validator()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+        self.reset_candidate()
+        (self.plugin / "hooks").mkdir()
+        self.assert_rejected("default-discovered `hooks/` must contain `hooks/hooks.json`")
+
+    def test_hook_subtree_rejects_unsafe_symlinks_for_allowing_policies(self) -> None:
+        if not hasattr(os, "symlink"):
+            self.skipTest("symlinks are unavailable")
+
+        for policy in ("default", "allow"):
+            for location in ("root", "nested"):
+                for target_kind in ("absolute", "broken", "escape"):
+                    with self.subTest(policy=policy, location=location, target=target_kind):
+                        self.reset_candidate()
+                        if policy == "allow":
+                            self.set_hooks({"hooks": {}})
+
+                        outside_dir = Path(self.tempdir.name) / f"outside-{policy}-{location}-{target_kind}"
+                        outside_dir.mkdir(exist_ok=True)
+                        (outside_dir / "hooks.json").write_text(
+                            '{"hooks":{}}\n', encoding="utf-8"
+                        )
+
+                        hooks_root = self.plugin / "hooks"
+                        if location == "root":
+                            if target_kind == "absolute":
+                                hooks_root.symlink_to(outside_dir)
+                            elif target_kind == "broken":
+                                hooks_root.symlink_to("missing-hooks")
+                            else:
+                                hooks_root.symlink_to(
+                                    os.path.relpath(outside_dir, self.plugin)
+                                )
+                        else:
+                            hooks_root.mkdir()
+                            self.write_hook_file("hooks/hooks.json")
+                            nested = hooks_root / "nested"
+                            if target_kind == "absolute":
+                                nested.symlink_to(outside_dir)
+                            elif target_kind == "broken":
+                                nested.symlink_to("missing-target")
+                            else:
+                                nested.symlink_to(
+                                    os.path.relpath(outside_dir, hooks_root)
+                                )
+
+                        result = self.run_validator()
+                        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                        self.assertRegex(
+                            result.stderr,
+                            r"generated hook symlink (?:must be relative|escapes or is broken)",
+                        )
+                        self.assertNotIn("Traceback", result.stderr)
+
+    def test_hook_subtree_follows_contained_directory_symlink(self) -> None:
+        if not hasattr(os, "symlink"):
+            self.skipTest("symlinks are unavailable")
+        self.set_hooks({"hooks": {}})
+        (self.plugin / "hooks").mkdir()
+        contained = self.plugin / "hook-targets" / "contained-directory"
+        contained.mkdir(parents=True)
+        outside = Path(self.tempdir.name) / "outside-hook.json"
+        outside.write_text('{"hooks":{}}\n', encoding="utf-8")
+        (contained / "unsafe.json").symlink_to(outside)
+        (contained / "cycle").symlink_to(".")
+        (self.plugin / "hooks" / "contained-directory").symlink_to(
+            "../hook-targets/contained-directory"
+        )
+
+        self.assert_rejected("generated hook symlink must be relative")
+
+    def test_hook_subtree_accepts_contained_materialized_relative_symlink(self) -> None:
+        if not hasattr(os, "symlink"):
+            self.skipTest("symlinks are unavailable")
+        self.set_hooks({"hooks": {}})
+        self.write_hook_file("hook-targets/contained.json")
+        contained_directory = self.plugin / "hook-targets" / "contained-directory"
+        contained_directory.mkdir()
+        (contained_directory / "hook.json").write_text(
+            '{"hooks":{}}\n', encoding="utf-8"
+        )
+        (contained_directory / "cycle").symlink_to(".")
+        (self.plugin / "hooks").mkdir()
+        (self.plugin / "hooks" / "contained.json").symlink_to(
+            "../hook-targets/contained.json"
+        )
+        (self.plugin / "hooks" / "contained-directory").symlink_to(
+            "../hook-targets/contained-directory"
+        )
+        result = self.run_validator()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_frontmatter_uses_first_closing_fence_and_owned_keys_only(self) -> None:
         skill = self.plugin / "skills" / "brainstorming" / "SKILL.md"

@@ -22,10 +22,12 @@ Codex below describe the product integration, not a required agent harness.
 - Use the upstream plugin manifest when available and preserve unknown upstream
   fields. The fallback template exists for upstream refs without a manifest.
 - Enforce the manager-owned contract: plugin name `superpowers`, a ref-aware
-  manager version, `skills: ./skills/`, upstream provenance, and no manifest
-  `hooks` field or physical `hooks/` directory.
-- The hook-free policy is Codex-specific and deliberate. Changing it requires
-  a separate design and current compatibility evidence.
+  manager version, `skills: ./skills/`, and upstream provenance. An upstream
+  Codex manifest owns its hook declaration: exact `{}` and manifest-less fallback
+  refs generate no `hooks/`; active or default upstream declarations conditionally
+  materialize upstream hook files. The manager never creates managed hooks or
+  mutates Codex trust state. Changing this policy requires a separate design and
+  current compatibility evidence.
 - `scripts/prepare` must build in an invocation-specific staging tree, validate
   before replacement, clean only its own staging tree on every normal or
   trapped exit, and preserve the previous generated tree on failure.
