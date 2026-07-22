@@ -218,10 +218,12 @@ spw_codex_build() {
 
   upstream_manifest="$upstream_root/.codex-plugin/plugin.json"
   if [ -f "$upstream_manifest" ]; then
+    manifest_source=upstream
     if ! cp "$upstream_manifest" "$candidate_manifest"; then
       spw_codex_failure build "build-failed" "cannot copy upstream manifest into candidate" "" "$messages_file"
     fi
   else
+    manifest_source=fallback
     if ! cp "$fallback_manifest" "$candidate_manifest"; then
       spw_codex_failure build "build-failed" "cannot copy fallback manifest into candidate" "" "$messages_file"
     fi
@@ -246,6 +248,7 @@ spw_codex_build() {
     --resolved-ref "$resolved_ref" \
     --commit "$commit" \
     --manifest-version "$manager_version" \
+    --manifest-source "$manifest_source" \
     --upstream-manifest-version "$upstream_manifest_version" \
     >"$stdout_file" 2>"$stderr_file"; then
     spw_codex_append_messages "$messages_file" stdout "$stdout_file"

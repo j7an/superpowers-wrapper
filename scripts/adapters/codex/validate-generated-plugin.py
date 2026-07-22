@@ -61,6 +61,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--resolved-ref", required=True)
     parser.add_argument("--commit", required=True)
     parser.add_argument("--manifest-version", required=True)
+    parser.add_argument(
+        "--manifest-source", required=True, choices=("upstream", "fallback")
+    )
     parser.add_argument("--upstream-manifest-version", required=True)
     return parser.parse_args(argv)
 
@@ -95,6 +98,7 @@ def validate_local_path(
     errors: list[str],
     *,
     require_directory: bool = False,
+    require_file: bool = False,
 ) -> None:
     if not isinstance(raw_value, str) or not raw_value.strip():
         errors.append(f"{label} must be a non-empty relative path")
@@ -119,18 +123,78 @@ def validate_local_path(
             errors.append(f"{label} target `{raw_value}` does not exist")
         elif require_directory and not target.is_dir():
             errors.append(f"{label} target `{raw_value}` must be a directory")
+        elif require_file and not target.is_file():
+            errors.append(f"{label} target `{raw_value}` must be a file")
     except OSError:
         errors.append(f"{label} target `{raw_value}` could not be inspected")
 
 
-def validate_manifest(plugin_root: Path, expected_version: str, errors: list[str]) -> None:
+def validate_hook_path(
+    plugin_root: Path, value: Any, label: str, errors: list[str]
+) -> None:
+    if not isinstance(value, str) or not value.startswith("./"):
+        errors.append(f"{label} must start with `./`")
+        return
+    validate_local_path(plugin_root, value, label, errors, require_file=True)
+
+
+def validate_hooks(
+    plugin_root: Path,
+    manifest: dict[str, Any],
+    manifest_source: str,
+    errors: list[str],
+) -> str:
+    if manifest_source == "fallback":
+        if "hooks" in manifest:
+            errors.append("fallback plugin manifest field `hooks` must be absent")
+        return "forbid"
+    if "hooks" not in manifest:
+        return "default"
+    hooks = manifest["hooks"]
+    if hooks == {}:
+        return "forbid"
+    if isinstance(hooks, str):
+        validate_hook_path(plugin_root, hooks, "plugin manifest field `hooks`", errors)
+        return "allow"
+    if isinstance(hooks, dict):
+        return "allow"
+    if not isinstance(hooks, list):
+        errors.append("plugin manifest field `hooks` has an unsupported type")
+        return "allow"
+    if not hooks:
+        return "default"
+    if all(isinstance(value, str) for value in hooks):
+        for index, value in enumerate(hooks):
+            validate_hook_path(
+                plugin_root,
+                value,
+                f"plugin manifest field `hooks[{index}]`",
+                errors,
+            )
+        return "allow"
+    if all(isinstance(value, dict) for value in hooks):
+        return "allow"
+    errors.append(
+        "plugin manifest field `hooks` array must contain only paths or only objects"
+    )
+    return "allow"
+
+
+def validate_manifest(
+    plugin_root: Path,
+    expected_version: str,
+    manifest_source: str,
+    errors: list[str],
+) -> str:
     path = plugin_root / ".codex-plugin" / "plugin.json"
     if not path.is_file():
         errors.append("missing required file `.codex-plugin/plugin.json`")
-        return
+        return "forbid"
     manifest = load_json_object(path, "plugin manifest", errors)
     if manifest is None:
-        return
+        return "forbid"
+
+    hook_policy = validate_hooks(plugin_root, manifest, manifest_source, errors)
 
     if manifest.get("name") != "superpowers":
         errors.append("plugin manifest field `name` must equal `superpowers`")
@@ -144,8 +208,6 @@ def validate_manifest(plugin_root: Path, expected_version: str, errors: list[str
         errors.append("plugin manifest field `description` must be non-empty")
     if manifest.get("skills") != "./skills/":
         errors.append("plugin manifest field `skills` must equal `./skills/`")
-    if "hooks" in manifest:
-        errors.append("plugin manifest field `hooks` must be absent")
 
     validate_local_path(
         plugin_root,
@@ -166,11 +228,11 @@ def validate_manifest(plugin_root: Path, expected_version: str, errors: list[str
             errors.append("plugin manifest field `mcpServers` must be a string or object")
 
     if "interface" not in manifest:
-        return
+        return hook_policy
     interface = manifest["interface"]
     if not isinstance(interface, dict):
         errors.append("plugin manifest field `interface` must be an object")
-        return
+        return hook_policy
     for field in ("composerIcon", "logo", "logoDark"):
         if field in interface:
             validate_local_path(
@@ -191,6 +253,7 @@ def validate_manifest(plugin_root: Path, expected_version: str, errors: list[str
                     f"plugin manifest field `interface.screenshots[{index}]`",
                     errors,
                 )
+    return hook_policy
 
 
 def validate_skill_frontmatter(skill_md: Path, skill_name: str, errors: list[str]) -> None:
@@ -224,7 +287,43 @@ def validate_skill_frontmatter(skill_md: Path, skill_name: str, errors: list[str
             errors.append(f"skill `{skill_name}` frontmatter field `{key}` must be non-empty")
 
 
-def validate_tree(plugin_root: Path, errors: list[str]) -> None:
+def validate_hook_subtree(
+    plugin_root: Path, hooks_root: Path, errors: list[str]
+) -> None:
+    try:
+        resolved_root = plugin_root.resolve(strict=True)
+    except (OSError, RuntimeError, ValueError):
+        errors.append("generated plugin root could not be resolved")
+        return
+
+    def validate_symlink(path: Path) -> bool:
+        if not path.is_symlink():
+            return True
+        try:
+            raw_target = Path(os.readlink(path))
+        except OSError:
+            errors.append(f"generated hook symlink could not be inspected: {path}")
+            return False
+        if raw_target.is_absolute():
+            errors.append(f"generated hook symlink must be relative: {path}")
+            return False
+        try:
+            path.resolve(strict=True).relative_to(resolved_root)
+        except (OSError, RuntimeError, ValueError):
+            errors.append(f"generated hook symlink escapes or is broken: {path}")
+            return False
+        return True
+
+    if not validate_symlink(hooks_root):
+        return
+    try:
+        for path in hooks_root.rglob("*"):
+            validate_symlink(path)
+    except OSError:
+        errors.append("generated hook subtree could not be inspected")
+
+
+def validate_tree(plugin_root: Path, hook_policy: str, errors: list[str]) -> None:
     required_files = (
         ".codex-plugin/plugin.template.json",
         ".superpowers-upstream.json",
@@ -235,8 +334,21 @@ def validate_tree(plugin_root: Path, errors: list[str]) -> None:
     for relative in required_files:
         if not (plugin_root / relative).is_file():
             errors.append(f"missing required file `{relative}`")
-    if os.path.lexists(plugin_root / "hooks"):
-        errors.append("generated plugin must not contain `hooks/`")
+    hooks_root = plugin_root / "hooks"
+    hooks_exists = os.path.lexists(hooks_root)
+    if hook_policy == "forbid" and hooks_exists:
+        errors.append("generated plugin must not contain `hooks/` for this manifest source")
+    elif hooks_exists:
+        validate_local_path(
+            plugin_root,
+            "./hooks",
+            "generated plugin path `hooks/`",
+            errors,
+            require_directory=True,
+        )
+        validate_hook_subtree(plugin_root, hooks_root, errors)
+        if hook_policy == "default" and not (hooks_root / "hooks.json").is_file():
+            errors.append("default-discovered `hooks/` must contain `hooks/hooks.json`")
 
     skills_root = plugin_root / "skills"
     if not skills_root.is_dir():
@@ -292,8 +404,13 @@ def validate(args: argparse.Namespace) -> list[str]:
     except (OSError, RuntimeError, ValueError):
         errors.append("plugin root could not be resolved")
         return errors
-    validate_manifest(plugin_root, args.manifest_version, errors)
-    validate_tree(plugin_root, errors)
+    hook_policy = validate_manifest(
+        plugin_root,
+        args.manifest_version,
+        args.manifest_source,
+        errors,
+    )
+    validate_tree(plugin_root, hook_policy, errors)
     validate_provenance(args, plugin_root, errors)
     return errors
 
