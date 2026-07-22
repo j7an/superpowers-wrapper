@@ -6,6 +6,41 @@ test_dir=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
 spw_test_root
 spw_test_tmpdir
 
+# Production scripts must not grow a hook-trust mutation surface. The literal
+# checks deliberately include comments; app-server is allowed only in comments.
+python3 -S - "$root/scripts" <<'PY'
+from pathlib import Path
+import sys
+
+scripts_root = Path(sys.argv[1])
+forbidden_literals = (
+    "requirements.toml",
+    "hooks.state",
+    "trusted_hash",
+    "--dangerously-bypass-hook-trust",
+)
+
+for path in sorted(scripts_root.rglob("*")):
+    if not path.is_file():
+        continue
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        raise SystemExit(f"production script could not be inspected: {path}: {exc}")
+    for forbidden in forbidden_literals:
+        if forbidden in text:
+            raise SystemExit(
+                "production scripts must not contain hook trust mutation "
+                f"surface: {forbidden} ({path})"
+            )
+    for number, line in enumerate(text.splitlines(), 1):
+        if "app-server" in line and not line.lstrip().startswith("#"):
+            raise SystemExit(
+                "production scripts must not invoke the Codex app-server: "
+                f"{path}:{number}"
+            )
+PY
+
 # ---------------------------------------------------------------------------
 # Harness: a fake upstream git repo, a copied package root (running install
 # from the real repo root would dirty the working tree), the shipped built-in
@@ -63,17 +98,17 @@ cat > "$fake_codex" <<'EOF'
 state=$(CDPATH= cd -- "$(dirname "$0")" && pwd)/state
 printf '%s\n' "$*" >> "$state/codex.log"
 
-if [ "$1" = plugin ] && [ "$2" = list ]; then
+if [ "$#" -eq 3 ] && [ "$1" = plugin ] && [ "$2" = list ] && [ "$3" = --json ]; then
   rc=0; [ -f "$state/plugin_list.rc" ] && rc=$(cat "$state/plugin_list.rc")
   cat "$state/plugin_list.json"
   exit "$rc"
 fi
-if [ "$1" = plugin ] && [ "$2" = marketplace ] && [ "$3" = list ]; then
+if [ "$#" -eq 4 ] && [ "$1" = plugin ] && [ "$2" = marketplace ] && [ "$3" = list ] && [ "$4" = --json ]; then
   rc=0; [ -f "$state/marketplace_list.rc" ] && rc=$(cat "$state/marketplace_list.rc")
   cat "$state/marketplace_list.json"
   exit "$rc"
 fi
-if [ "$1" = plugin ] && [ "$2" = marketplace ] && [ "$3" = add ]; then
+if [ "$#" -eq 4 ] && [ "$1" = plugin ] && [ "$2" = marketplace ] && [ "$3" = add ] && [ "$4" = "$SPW_TEST_PKG_ROOT" ]; then
   [ -f "$state/marketplace_add_fail" ] && exit 1
   python3 - "$state/marketplace_list.json" "$4" <<'PY'
 import json, sys
@@ -87,7 +122,7 @@ with open(path, "w", encoding="utf-8") as f:
 PY
   exit 0
 fi
-if [ "$1" = plugin ] && [ "$2" = marketplace ] && [ "$3" = remove ]; then
+if [ "$#" -eq 4 ] && [ "$1" = plugin ] && [ "$2" = marketplace ] && [ "$3" = remove ] && [ "$4" = superpowers-manager ]; then
   python3 - "$state/marketplace_list.json" "$4" <<'PY'
 import json, sys
 path, name = sys.argv[1], sys.argv[2]
@@ -99,7 +134,7 @@ with open(path, "w", encoding="utf-8") as f:
 PY
   exit 0
 fi
-if [ "$1" = plugin ] && [ "$2" = add ]; then
+if [ "$#" -eq 3 ] && [ "$1" = plugin ] && [ "$2" = add ] && [ "$3" = superpowers@superpowers-manager ]; then
   [ -f "$state/plugin_add_fail" ] && exit 1
   [ -f "$state/plugin_add_noop" ] && exit 0
   dest="$state/codex-home/plugins/cache/superpowers-manager/superpowers/1.0.0"
@@ -119,11 +154,12 @@ PY
   fi
   exit 0
 fi
-if [ "$1" = plugin ] && [ "$2" = remove ]; then
+if [ "$#" -eq 3 ] && [ "$1" = plugin ] && [ "$2" = remove ] && [ "$3" = superpowers@superpowers-manager ]; then
   rm -rf "$state/codex-home/plugins/cache/superpowers-manager"
   exit 0
 fi
-exit 0
+echo "unexpected fake Codex command: $*" >&2
+exit 99
 EOF
 chmod +x "$fake_codex"
 
