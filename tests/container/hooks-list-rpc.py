@@ -14,7 +14,7 @@ buffer = bytearray()
 
 
 def fail(message: str) -> None:
-    raise SystemExit(f"Codex 0.144.6 hooks/list protocol failed: {message}")
+    raise SystemExit(f"Codex hooks/list protocol failed: {message}")
 
 
 def reject_constant(constant: str) -> None:

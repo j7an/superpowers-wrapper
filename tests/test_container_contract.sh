@@ -159,6 +159,7 @@ end
 
 def validate_hooks_rpc!(hooks_rpc)
   required = [
+    'raise SystemExit(f"Codex hooks/list protocol failed: {message}")',
     'if process.poll() is not None or process.stdin is None:',
     'fail(f"could not send request: {exc}")',
     'def reject_constant(constant: str) -> None:',
@@ -333,7 +334,7 @@ def validate_probe!(probe)
 
   hook_contract = [
     'schema_root="$root/app-server-schema"',
-    'Codex 0.144.6 hooks/list protocol changed',
+    'Codex hooks/list protocol changed',
     'ClientRequest.json',
     'v2/HooksListResponse.json',
     '"hooks/list"',
@@ -390,6 +391,20 @@ def validate_probe!(probe)
     schema_gates,
     "schema preflight must require optional, exact string-or-null pluginId"
   )
+
+  capture_lines = active_lines(function_body(probe, 'capture_hooks_response'))
+  expected_capture_lines = [
+    'probe_cwd=$(pwd -P)',
+    'if ! "$timeout_bin" 30 python3 -S \\',
+    '"$package/tests/container/hooks-list-rpc.py" \\',
+    '"$probe_cwd" "$hooks_response" "$hooks_stderr"; then',
+    'cat "$hooks_stderr" >&2',
+    'return 1',
+    'fi',
+  ]
+  unless capture_lines == expected_capture_lines
+    raise "capture_hooks_response must emit captured app-server stderr only on RPC failure"
+  end
 
   top_level = top_level_shell_lines(probe)
   manager_mutations = [
@@ -510,6 +525,14 @@ mutations = {
   'non-boolean isManaged accepted' => probe.sub(
     'if actual.get("isManaged") is not False:',
     'if actual.get("isManaged") != False:'
+  ),
+  'captured hooks stderr removed' => probe.sub(
+    'cat "$hooks_stderr" >&2',
+    ':'
+  ),
+  'captured hooks stderr leaked to stdout' => probe.sub(
+    'cat "$hooks_stderr" >&2',
+    'cat "$hooks_stderr"'
   ),
 }
 mutations.each do |name, mutation|

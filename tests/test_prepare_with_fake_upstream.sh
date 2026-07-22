@@ -188,9 +188,25 @@ git -C "$upstream" checkout -b hooks-empty-object >/dev/null
 set_manifest_hooks value '{}'
 commit_hook_ref hooks-empty-object "manifest explicitly disables hooks"
 
+git -C "$upstream" checkout -b hooks-empty-array >/dev/null
+set_manifest_hooks value '[]'
+cp "$upstream/hooks/hooks-codex.json" "$upstream/hooks/hooks.json"
+commit_hook_ref hooks-empty-array "empty hook array uses default discovery"
+
+git -C "$upstream" checkout -b hooks-string-array >/dev/null
+set_manifest_hooks value '["./config/hooks-first.json","./alternate/hooks-second.json"]'
+mkdir -p "$upstream/config" "$upstream/alternate"
+printf '%s\n' '{"fixture":"first"}' > "$upstream/config/hooks-first.json"
+printf '%s\n' '{"fixture":"second"}' > "$upstream/alternate/hooks-second.json"
+commit_hook_ref hooks-string-array "manifest declares multiple hook paths"
+
 git -C "$upstream" checkout -b hooks-inline >/dev/null
 set_manifest_hooks value '{"SessionStart":[{"hooks":[{"type":"command","command":"echo inline"}]}]}'
 commit_hook_ref hooks-inline "manifest declares inline hooks"
+
+git -C "$upstream" checkout -b hooks-inline-array >/dev/null
+set_manifest_hooks value '[{"SessionStart":[{"hooks":[{"type":"command","command":"echo inline array"}]}]}]'
+commit_hook_ref hooks-inline-array "manifest declares an inline hook array"
 
 git -C "$upstream" checkout -b hooks-default >/dev/null
 set_manifest_hooks absent
@@ -736,6 +752,24 @@ if [ -e "$tmpdir/out-hooks-empty-object/hooks" ]; then
   exit 1
 fi
 
+run_prepare_for_ref "hooks-empty-array" "out-hooks-empty-array"
+assert_manifest_json "out-hooks-empty-array" "/hooks" '[]'
+test -f "$tmpdir/out-hooks-empty-array/hooks/hooks.json"
+test -f "$tmpdir/out-hooks-empty-array/hooks/hooks-codex.json"
+test -f "$tmpdir/out-hooks-empty-array/hooks/session-start-codex"
+test -f "$tmpdir/out-hooks-empty-array/hooks/support/helper.txt"
+
+run_prepare_for_ref "hooks-string-array" "out-hooks-string-array"
+assert_manifest_json \
+  "out-hooks-string-array" "/hooks" \
+  '["./config/hooks-first.json","./alternate/hooks-second.json"]'
+grep -Fxq \
+  '{"fixture":"first"}' \
+  "$tmpdir/out-hooks-string-array/config/hooks-first.json"
+grep -Fxq \
+  '{"fixture":"second"}' \
+  "$tmpdir/out-hooks-string-array/alternate/hooks-second.json"
+
 run_prepare_for_ref "hooks-inline" "out-hooks-inline"
 assert_manifest_json \
   "out-hooks-inline" "/hooks" \
@@ -743,6 +777,14 @@ assert_manifest_json \
 test -f "$tmpdir/out-hooks-inline/hooks/hooks-codex.json"
 test -f "$tmpdir/out-hooks-inline/hooks/session-start-codex"
 test -f "$tmpdir/out-hooks-inline/hooks/support/helper.txt"
+
+run_prepare_for_ref "hooks-inline-array" "out-hooks-inline-array"
+assert_manifest_json \
+  "out-hooks-inline-array" "/hooks" \
+  '[{"SessionStart":[{"hooks":[{"command":"echo inline array","type":"command"}]}]}]'
+test -f "$tmpdir/out-hooks-inline-array/hooks/hooks-codex.json"
+test -f "$tmpdir/out-hooks-inline-array/hooks/session-start-codex"
+test -f "$tmpdir/out-hooks-inline-array/hooks/support/helper.txt"
 
 run_prepare_for_ref "hooks-default" "out-hooks-default"
 assert_manifest_lacks_key "out-hooks-default" "hooks"

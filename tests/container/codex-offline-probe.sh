@@ -249,7 +249,7 @@ import sys
 
 
 def fail(message):
-    raise SystemExit(f"Codex 0.144.6 hooks/list protocol changed: {message}")
+    raise SystemExit(f"Codex hooks/list protocol changed: {message}")
 
 
 try:
@@ -365,9 +365,12 @@ PY
 
 capture_hooks_response() {
   probe_cwd=$(pwd -P)
-  "$timeout_bin" 30 python3 -S \
+  if ! "$timeout_bin" 30 python3 -S \
     "$package/tests/container/hooks-list-rpc.py" \
-    "$probe_cwd" "$hooks_response" "$hooks_stderr"
+    "$probe_cwd" "$hooks_response" "$hooks_stderr"; then
+    cat "$hooks_stderr" >&2
+    return 1
+  fi
 }
 
 assert_manager_hooks_absent() {

@@ -86,7 +86,7 @@ trust applies to a command definition, not to the contents of scripts that the
 definition references. An explicit update of an older pin can therefore change
 the contents of a trusted referenced script, or reveal a newly untrusted
 upstream definition; review it before trusting or running it. This policy
-eliminates latent hook-policy drift; it is not a repair for a v6.1.1 conflict.
+eliminates latent hook-policy drift.
 
 ## Runtime architecture
 
