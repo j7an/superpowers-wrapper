@@ -25,15 +25,16 @@ compatibility facts, not a recommendation to make every parser identical.
 
 The ten `SUPERPOWERS_*` variables below are the complete public override set.
 The CLI inherits the environment wholesale. “Unset” means the consumer uses
-the source-derived default shown here. `SUPERPOWERS_CODEX` appears twice to
-separate launcher preflight from adapter use.
+the source-derived default shown here. `SUPERPOWERS_CODEX` appears three times
+to separate launcher preflight, listing, and mutation use.
 
 | Behavior ID | Variable | Current default | Production consumer and effect |
 |---|---|---|---|
 | `CLI-ENV-REF-01` | `SUPERPOWERS_REF` | Saved pinned/track-latest intent, then `config/upstream-ref` (`latest-release`) | Selection/ref computation; any non-empty value independently overrides the effective ref. Generic runtime resolution is frozen separately under `REF-GENERIC-FALLBACK-01`. |
 | `CLI-ENV-UPSTREAM-URL-01` | `SUPERPOWERS_UPSTREAM_URL` | `https://github.com/obra/superpowers` unless saved selection supplies a source | Selection/source computation plus `pin` and `track-latest`; when non-empty it independently overrides the effective source. |
 | `CLI-ENV-CODEX-PREFLIGHT-01` | `SUPERPOWERS_CODEX` | `codex` | Public CLI preflight accepts an executable path override in place of the default `codex` command before dispatching Codex-dependent commands. |
-| `CLI-ENV-CODEX-ADAPTER-01` | `SUPERPOWERS_CODEX` | `codex` | Codex adapter listing and mutation operations use the override; when unset, they resolve `codex` from `PATH`. |
+| `CLI-ENV-CODEX-LISTING-01` | `SUPERPOWERS_CODEX` | `codex` | Codex adapter fingerprint listing uses the executable override; when unset, it resolves `codex` from `PATH`. |
+| `CLI-ENV-CODEX-MUTATION-01` | `SUPERPOWERS_CODEX` | `codex` | Codex adapter install mutation uses the explicit executable override. |
 | `CLI-ENV-CACHE-DIR-01` | `SUPERPOWERS_CACHE_DIR` | Package-root `.cache/upstream` | `prepare`; the upstream repository is beneath `superpowers/`. |
 | `CLI-ENV-CONFIG-DIR-01` | `SUPERPOWERS_CONFIG_DIR` | Location chain below | Selection-state readers and writers. An explicitly set value, including empty, must be absolute. |
 | `CLI-ENV-PLUGIN-ROOT-01` | `SUPERPOWERS_PLUGIN_ROOT` | Package-root `plugins/superpowers` | `prepare`; the selected path becomes the generated live tree. |
@@ -48,7 +49,7 @@ separate launcher preflight from adapter use.
 |---|---|
 | `CLI-ENV-PASSTHROUGH-01` | The CLI inherits its controlled invocation environment wholesale, including the ten public `SUPERPOWERS_*` overrides; it does not synthesize unrelated `XDG_*`, npm, or Codex variables. |
 | `CLI-ENV-PREPARE-PATHS-01` | Relative `SUPERPOWERS_CACHE_DIR` and `SUPERPOWERS_PLUGIN_ROOT` values are resolved from the invocation directory. |
-| `CLI-ENV-INSTALLED-DEFAULTS-01` | Without explicit overrides, Codex adapter commands use `codex` from `PATH` and installed fingerprint lookup uses `$HOME/.codex`. |
+| `CLI-ENV-INSTALLED-DEFAULTS-01` | Without explicit overrides, Codex adapter fingerprint listing uses `codex` from `PATH` and installed fingerprint lookup uses `$HOME/.codex`. |
 | `SEL-LOCATION-01` | Selection state is exactly `SUPERPOWERS_CONFIG_DIR/selection.json` when that variable is set; otherwise `$XDG_CONFIG_HOME/superpowers-manager/selection.json` when XDG is non-empty; otherwise `$HOME/.config/superpowers-manager/selection.json`. Relative or unavailable required bases fail closed. |
 | `SEL-PRECEDENCE-REF-01` | Ref precedence is independent: non-empty `SUPERPOWERS_REF` > saved pinned ref or saved track-latest intent > packaged `config/upstream-ref`. |
 | `SEL-PRECEDENCE-SOURCE-01` | Source precedence is independent: non-empty `SUPERPOWERS_UPSTREAM_URL` > source saved with either selection mode > `https://github.com/obra/superpowers`. A ref and source may therefore have different origins. |

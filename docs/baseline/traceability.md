@@ -21,19 +21,20 @@ selectors or intentionally update the inventory, test, and this map together.
 | `CLI-ENV-REF-01` | Generic ref override and precedence | `tests/test_selection_state.sh::# BASELINE CASE: SEL-PRECEDENCE-REF-01 complete ref precedence` | — |
 | `CLI-ENV-UPSTREAM-URL-01` | Source override and precedence | `tests/baseline/cli-parity.test.js::SEL-PRECEDENCE-SOURCE-01 source precedence is independent` | `tests/fixtures/baseline/selection/track-latest.json` |
 | `CLI-ENV-CODEX-PREFLIGHT-01` | Codex executable launcher preflight | `tests/baseline/cli-parity.test.js::CLI-ENV-CODEX-PREFLIGHT-01 custom Codex command satisfies launcher preflight` | — |
-| `CLI-ENV-CODEX-ADAPTER-01` | Codex executable adapter use | `tests/test_adapter_protocol.sh::# BASELINE CASE: CLI-ENV-CODEX-INSTALLED-DEFAULTS-01 Codex and installed-root defaults and overrides` | — |
+| `CLI-ENV-CODEX-LISTING-01` | Codex executable listing use | `tests/test_adapter_protocol.sh::# BASELINE CASE: CLI-ENV-CODEX-LISTING-01 fingerprint listing uses override and default command` | — |
+| `CLI-ENV-CODEX-MUTATION-01` | Codex executable mutation use | `tests/test_adapter_protocol.sh::# BASELINE CASE: CLI-ENV-CODEX-MUTATION-01 install mutation uses Codex override` | — |
 | `CLI-ENV-CACHE-DIR-01` | Cache default and override | `tests/baseline/cli-parity.test.js::CLI-ENV-PREPARE-01 public prepare path defaults and overrides` | — |
 | `CLI-ENV-CONFIG-DIR-01` | Explicit config location | `tests/test_selection_state.sh::# BASELINE CASE: SEL-LOCATION-01 selection location chain and fail-closed bases` | — |
 | `CLI-ENV-PLUGIN-ROOT-01` | Plugin-root default and override | `tests/baseline/cli-parity.test.js::CLI-ENV-PREPARE-01 public prepare path defaults and overrides` | — |
 | `CLI-ENV-MANIFEST-TEMPLATE-01` | Manifest-template default, override, and type gate | `tests/baseline/cli-parity.test.js::CLI-ENV-MANIFEST-TEMPLATE-01 fallback template bytes and non-file rejection` | — |
 | `CLI-ENV-VALIDATOR-01` | Optional validator default and override | `tests/baseline/cli-parity.test.js::CLI-ENV-PREPARE-01 public prepare path defaults and overrides` | — |
-| `CLI-ENV-INSTALLED-ROOT-01` | Installed-root default and override | `tests/test_adapter_protocol.sh::# BASELINE CASE: CLI-ENV-CODEX-INSTALLED-DEFAULTS-01 Codex and installed-root defaults and overrides` | — |
+| `CLI-ENV-INSTALLED-ROOT-01` | Installed-root default and override | `tests/test_adapter_protocol.sh::# BASELINE CASE: CLI-ENV-CODEX-LISTING-01 fingerprint listing uses override and default command` | — |
 | `CLI-ENV-REFRESH-MODE-01` | Install-refresh default and validation | `tests/test_adapter_protocol.sh::# BASELINE CASE: CLI-ENV-REFRESH-MODE-01 install refresh defaults and validation` | — |
 | `CLI-ENV-XDG-CONFIG-01` | XDG config location | `tests/test_selection_state.sh::# BASELINE CASE: SEL-LOCATION-01 selection location chain and fail-closed bases` | — |
 | `CLI-ENV-HOME-01` | HOME config fallback | `tests/test_selection_state.sh::# BASELINE CASE: SEL-LOCATION-01 selection location chain and fail-closed bases` | — |
 | `CLI-ENV-PASSTHROUGH-01` | Whole-environment pass-through | `tests/baseline/cli-parity.test.js::CLI-ENV-01 ten SUPERPOWERS variables pass through` | — |
 | `CLI-ENV-PREPARE-PATHS-01` | Relative prepare paths | `tests/test_prepare_with_fake_upstream.sh::# BASELINE CASE: CLI-ENV-PREPARE-PATHS-01 relative prepare paths use invocation cwd` | — |
-| `CLI-ENV-INSTALLED-DEFAULTS-01` | Default Codex and installed root | `tests/test_adapter_protocol.sh::# BASELINE CASE: CLI-ENV-CODEX-INSTALLED-DEFAULTS-01 Codex and installed-root defaults and overrides` | — |
+| `CLI-ENV-INSTALLED-DEFAULTS-01` | Default Codex and installed root | `tests/test_adapter_protocol.sh::# BASELINE CASE: CLI-ENV-CODEX-LISTING-01 fingerprint listing uses override and default command` | — |
 | `SEL-LOCATION-01` | Selection location chain | `tests/test_selection_state.sh::# BASELINE CASE: SEL-LOCATION-01 selection location chain and fail-closed bases` | — |
 | `SEL-PRECEDENCE-REF-01` | Complete ref precedence | `tests/test_selection_state.sh::# BASELINE CASE: SEL-PRECEDENCE-REF-01 complete ref precedence` | — |
 | `SEL-PRECEDENCE-SOURCE-01` | Independent source precedence | `tests/baseline/cli-parity.test.js::SEL-PRECEDENCE-SOURCE-01 source precedence is independent` | `tests/fixtures/baseline/selection/track-latest.json` |

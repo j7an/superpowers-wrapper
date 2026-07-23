@@ -273,6 +273,7 @@ run_real_install() {
 }
 
 # BASELINE CASE: CLI-ENV-REFRESH-MODE-01 install refresh defaults and validation
+# BASELINE CASE: CLI-ENV-CODEX-MUTATION-01 install mutation uses Codex override
 run_real_install install-success
 [ "$RUN_RC" -eq 0 ]
 [ -f "$RUN_RESULT" ]
@@ -416,7 +417,7 @@ printf '%s\n' '{"commit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}' \
 printf '%s\n' '{"commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}' \
   > "$fingerprint_b/.superpowers-upstream.json"
 
-# BASELINE CASE: CLI-ENV-CODEX-INSTALLED-DEFAULTS-01 Codex and installed-root defaults and overrides
+# BASELINE CASE: CLI-ENV-CODEX-LISTING-01 fingerprint listing uses override and default command
 RUN_RESULT="$tmpdir/active-fingerprint.result.json"
 SPW_ADAPTER="$root/scripts/adapters/codex/adapter" \
 SUPERPOWERS_CODEX="$fingerprint_codex" \
