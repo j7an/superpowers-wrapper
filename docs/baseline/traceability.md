@@ -20,11 +20,12 @@ selectors or intentionally update the inventory, test, and this map together.
 | `CLI-CHILD-STATUS-01` | Delegated status propagation | `tests/baseline/cli-parity.test.js::CLI-CHILD-STATUS-01 delegated child status is preserved` | — |
 | `CLI-ENV-REF-01` | Generic ref override and precedence | `tests/test_selection_state.sh::# BASELINE CASE: SEL-PRECEDENCE-REF-01 complete ref precedence` | — |
 | `CLI-ENV-UPSTREAM-URL-01` | Source override and precedence | `tests/baseline/cli-parity.test.js::SEL-PRECEDENCE-SOURCE-01 source precedence is independent` | `tests/fixtures/baseline/selection/track-latest.json` |
-| `CLI-ENV-CODEX-01` | Codex executable default and override | `tests/test_adapter_protocol.sh::# BASELINE CASE: CLI-ENV-CODEX-INSTALLED-DEFAULTS-01 Codex and installed-root defaults and overrides` | — |
+| `CLI-ENV-CODEX-PREFLIGHT-01` | Codex executable launcher preflight | `tests/baseline/cli-parity.test.js::CLI-ENV-CODEX-PREFLIGHT-01 custom Codex command satisfies launcher preflight` | — |
+| `CLI-ENV-CODEX-ADAPTER-01` | Codex executable adapter use | `tests/test_adapter_protocol.sh::# BASELINE CASE: CLI-ENV-CODEX-INSTALLED-DEFAULTS-01 Codex and installed-root defaults and overrides` | — |
 | `CLI-ENV-CACHE-DIR-01` | Cache default and override | `tests/baseline/cli-parity.test.js::CLI-ENV-PREPARE-01 public prepare path defaults and overrides` | — |
 | `CLI-ENV-CONFIG-DIR-01` | Explicit config location | `tests/test_selection_state.sh::# BASELINE CASE: SEL-LOCATION-01 selection location chain and fail-closed bases` | — |
 | `CLI-ENV-PLUGIN-ROOT-01` | Plugin-root default and override | `tests/baseline/cli-parity.test.js::CLI-ENV-PREPARE-01 public prepare path defaults and overrides` | — |
-| `CLI-ENV-MANIFEST-TEMPLATE-01` | Manifest-template default and override | `tests/baseline/cli-parity.test.js::CLI-ENV-PREPARE-01 public prepare path defaults and overrides` | — |
+| `CLI-ENV-MANIFEST-TEMPLATE-01` | Manifest-template default, override, and type gate | `tests/baseline/cli-parity.test.js::CLI-ENV-MANIFEST-TEMPLATE-01 fallback template bytes and non-file rejection` | — |
 | `CLI-ENV-VALIDATOR-01` | Optional validator default and override | `tests/baseline/cli-parity.test.js::CLI-ENV-PREPARE-01 public prepare path defaults and overrides` | — |
 | `CLI-ENV-INSTALLED-ROOT-01` | Installed-root default and override | `tests/test_adapter_protocol.sh::# BASELINE CASE: CLI-ENV-CODEX-INSTALLED-DEFAULTS-01 Codex and installed-root defaults and overrides` | — |
 | `CLI-ENV-REFRESH-MODE-01` | Install-refresh default and validation | `tests/test_adapter_protocol.sh::# BASELINE CASE: CLI-ENV-REFRESH-MODE-01 install refresh defaults and validation` | — |
@@ -54,7 +55,7 @@ selectors or intentionally update the inventory, test, and this map together.
 | `REF-SOURCE-PROOF-01` | Exact source proof | `tests/test_ref_resolution.sh::# BASELINE CASE: REF-SOURCE-PROOF-01 selected source must supply a commit object` | — |
 | `REF-CLEANUP-01` | Interrupted exact-fetch cleanup | `tests/test_ref_resolution.sh::# BASELINE CASE: REF-CLEANUP-01 interrupted source proof cleans only its workspace` | — |
 | `REF-PIN-CLEANUP-01` | Interrupted pin cleanup | `tests/test_selection_commands.sh::# BASELINE CASE: REF-PIN-CLEANUP-01 interrupted pin proof cleans only its workspace` | — |
-| `PROVENANCE-BYTES-01` | Canonical provenance bytes | `tests/baseline/cli-parity.test.js::PROVENANCE-BYTES-01 prepare writes canonical provenance bytes` | `tests/fixtures/baseline/provenance/valid-tag.json` |
+| `PROVENANCE-BYTES-01` | Canonical tag and raw-commit provenance bytes | `tests/baseline/cli-parity.test.js::PROVENANCE-BYTES-01 prepare writes canonical provenance bytes` | `tests/fixtures/baseline/provenance/valid-commit.json` |
 | `SEL-READER-DUPLICATES-01` | Selection duplicate keys | `tests/test_selection_state.py::test_read_rejects_duplicate_unknown_missing_and_inconsistent_fields` | `tests/fixtures/baseline/selection/duplicate-key.json` |
 | `SEL-READER-CONSTANTS-01` | Selection constants | `tests/test_selection_state.py::test_read_rejects_non_object_constants_and_excessive_nesting` | `tests/fixtures/baseline/selection/non-standard-constant.json` |
 | `SEL-READER-DEPTH-01` | Selection depth 256 | `tests/test_selection_state.py::test_read_enforces_exact_nesting_boundary` | `tests/fixtures/baseline/selection/depth-257.json` |

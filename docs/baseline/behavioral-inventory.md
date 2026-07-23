@@ -13,7 +13,7 @@ compatibility facts, not a recommendation to make every parser identical.
 
 | Behavior ID | Contract |
 |---|---|
-| `CLI-MODE-HELP-01` | `--help` and `-h` are standalone help modes. They write the complete usage text to stdout, write nothing to stderr, perform no preflight or dispatch, and exit 0. |
+| `CLI-MODE-HELP-01` | `--help` and `-h` are standalone help modes. Even when Git, Python, Codex, and the POSIX shell are unavailable, they write the complete usage text to stdout, write nothing to stderr, perform no preflight or dispatch, and exit 0. |
 | `CLI-MODE-VERSION-01` | `--version` is a standalone version mode. It reads the current package version, writes that value plus one newline to stdout, writes nothing to stderr, performs no dispatch, and exits 0. |
 | `CLI-MODE-DEFAULT-01` | No arguments is the third distinct mode and is exactly equivalent to dispatching `update` with no arguments. |
 | `CLI-COMMANDS-01` | The eight named subcommands are `pin`, `track-latest`, `unpin`, `prepare`, `probe`, `install`, `update`, and `uninstall`. Except for CLI-owned arity and pin-ref checks, remaining arguments pass through unchanged to the selected script. |
@@ -25,17 +25,19 @@ compatibility facts, not a recommendation to make every parser identical.
 
 The ten `SUPERPOWERS_*` variables below are the complete public override set.
 The CLI inherits the environment wholesale. “Unset” means the consumer uses
-the source-derived default shown here.
+the source-derived default shown here. `SUPERPOWERS_CODEX` appears twice to
+separate launcher preflight from adapter use.
 
 | Behavior ID | Variable | Current default | Production consumer and effect |
 |---|---|---|---|
 | `CLI-ENV-REF-01` | `SUPERPOWERS_REF` | Saved pinned/track-latest intent, then `config/upstream-ref` (`latest-release`) | Selection/ref computation; any non-empty value independently overrides the effective ref. Generic runtime resolution is frozen separately under `REF-GENERIC-FALLBACK-01`. |
 | `CLI-ENV-UPSTREAM-URL-01` | `SUPERPOWERS_UPSTREAM_URL` | `https://github.com/obra/superpowers` unless saved selection supplies a source | Selection/source computation plus `pin` and `track-latest`; when non-empty it independently overrides the effective source. |
-| `CLI-ENV-CODEX-01` | `SUPERPOWERS_CODEX` | `codex` | CLI Codex preflight and every Codex adapter listing or mutation. A path override is accepted. |
+| `CLI-ENV-CODEX-PREFLIGHT-01` | `SUPERPOWERS_CODEX` | `codex` | Public CLI preflight accepts an executable path override in place of the default `codex` command before dispatching Codex-dependent commands. |
+| `CLI-ENV-CODEX-ADAPTER-01` | `SUPERPOWERS_CODEX` | `codex` | Codex adapter listing and mutation operations use the override; when unset, they resolve `codex` from `PATH`. |
 | `CLI-ENV-CACHE-DIR-01` | `SUPERPOWERS_CACHE_DIR` | Package-root `.cache/upstream` | `prepare`; the upstream repository is beneath `superpowers/`. |
 | `CLI-ENV-CONFIG-DIR-01` | `SUPERPOWERS_CONFIG_DIR` | Location chain below | Selection-state readers and writers. An explicitly set value, including empty, must be absolute. |
 | `CLI-ENV-PLUGIN-ROOT-01` | `SUPERPOWERS_PLUGIN_ROOT` | Package-root `plugins/superpowers` | `prepare`; the selected path becomes the generated live tree. |
-| `CLI-ENV-MANIFEST-TEMPLATE-01` | `SUPERPOWERS_MANIFEST_TEMPLATE` | Package-root `plugins/superpowers/.codex-plugin/plugin.template.json` | `prepare` and adapter build fallback; the path must name a file before build. |
+| `CLI-ENV-MANIFEST-TEMPLATE-01` | `SUPERPOWERS_MANIFEST_TEMPLATE` | Package-root `plugins/superpowers/.codex-plugin/plugin.template.json` | `prepare` passes the selected fallback bytes through adapter build into generated `.codex-plugin/plugin.template.json`. A non-file path fails before adapter build or mutation. |
 | `CLI-ENV-VALIDATOR-01` | `SUPERPOWERS_VALIDATOR` | Empty, meaning no additional validator | `prepare`; a non-empty path runs after built-in validation and before activation. |
 | `CLI-ENV-INSTALLED-ROOT-01` | `SUPERPOWERS_INSTALLED_SEARCH_ROOT` | `$HOME/.codex` | Codex fingerprint inspection; the active version selects the exact plugin cache path below this root. |
 | `CLI-ENV-REFRESH-MODE-01` | `SUPERPOWERS_INSTALL_REFRESH_MODE` | `add-only` | Codex adapter install; allowed values are `add-only` and `remove-add`. |
@@ -117,7 +119,7 @@ Track-latest bytes:
 
 | Behavior ID | Contract |
 |---|---|
-| `PROVENANCE-BYTES-01` | `prepare` manager-authors `.superpowers-upstream.json` with exactly `source`, `requested_ref`, `resolved_ref`, `commit`, and `upstream_manifest_version` in that order, two-space indentation, JSON escaping, and one final newline. |
+| `PROVENANCE-BYTES-01` | For tag/latest and raw 40-hex commit preparation, `prepare` manager-authors `.superpowers-upstream.json` with exactly `source`, `requested_ref`, `resolved_ref`, `commit`, and `upstream_manifest_version` in that order, two-space indentation, JSON escaping, and one final newline. |
 
 Tag/latest provenance bytes:
 
@@ -175,7 +177,7 @@ The reader behaviors above are assigned as follows.
 | `SEL-READER-CONSTANTS-01` | Selection JSON rejects `NaN`, `Infinity`, and `-Infinity`. |
 | `SEL-READER-DEPTH-01` | Selection JSON accepts parsing through 256 nested arrays/objects and rejects 257 before schema use. |
 | `SEL-READER-BYTES-01` | Selection JSON has no input byte cap; valid state padded beyond 1 MiB remains valid. |
-| `SEL-READER-PATHS-01` | Selection state and its immediate directory are inspected without following a state symlink; symlink, directory, FIFO, and symlinked-parent cases fail closed. |
+| `SEL-READER-PATHS-01` | Selection state is inspected without following a state symlink; symlink, directory, and FIFO state paths fail closed. |
 | `PROV-READER-STRICT-01` | The strict provenance field-reader profile is frozen exactly as the matrix states. |
 | `PROV-READER-LENIENT-01` | The lenient generated-commit profile is frozen exactly as the matrix states. |
 | `PROV-READER-CANDIDATE-01` | The generated-candidate provenance validator profile is frozen exactly as the matrix states. |
@@ -279,7 +281,7 @@ hooks/support/helper.txt
 
 | Behavior ID | Contract |
 |---|---|
-| `FS-ATOMIC-01` | `prepare` builds and validates in a same-parent invocation workspace. Any pre-activation failure preserves the previous generated tree and removes its own staging tree. |
+| `FS-ATOMIC-01` | `prepare` passes the generated-tree candidate from a same-parent `.superpowers.prepare.XXXXXX` invocation workspace to validation. Any pre-activation failure preserves the previous generated tree and removes its own staging tree. |
 | `FS-ATOMIC-SWAP-01` | Activation uses rename; if the candidate-to-live rename fails after backing up an existing live tree, the previous tree is restored and candidate/backup residue is removed. |
 | `FS-CLEANUP-01` | Failed prepare cleanup removes only the current invocation workspace; sibling and interrupted historical workspaces are preserved. |
 | `FS-SYMLINK-01` | Public prepare rejects escaping and broken symlinks in a copied hook tree before activation or Codex mutation. |

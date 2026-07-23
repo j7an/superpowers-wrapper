@@ -53,7 +53,13 @@ function inventoryIds() {
     assertMarkdownDelimiter(lines, index, headerCells.length, 'inventory table');
     index += 2;
     while (/^\|.*\|$/.test(lines[index] || '')) {
-      const id = uncode(markdownCells(lines[index])[0]);
+      const fields = markdownCells(lines[index]);
+      assert.equal(
+        fields.length,
+        headerCells.length,
+        `inventory row must have ${headerCells.length} fields: ${lines[index]}`,
+      );
+      const id = uncode(fields[0]);
       assert.match(id, ID_PATTERN, `invalid inventory behavior ID: ${id}`);
       ids.push(id);
       index += 1;

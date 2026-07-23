@@ -12,7 +12,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { join, relative } from 'node:path';
+import { basename, dirname, join, relative } from 'node:path';
 import test from 'node:test';
 
 import {
@@ -201,15 +201,22 @@ function runSandboxGit(sandbox, args) {
   return result;
 }
 
-function writeFailingValidator(sandbox, name = 'reject-candidate.py') {
+function writeFailingValidator(
+  sandbox,
+  name = 'reject-candidate.py',
+  candidateRecord = null,
+) {
   const validator = join(sandbox.work, name);
+  const recordCandidate = candidateRecord === null
+    ? ''
+    : `Path(${JSON.stringify(candidateRecord)}).write_text(str(candidate) + "\\n", encoding="utf-8")\n`;
   writeFileSync(
     validator,
     `from pathlib import Path
 import sys
 
 candidate = Path(sys.argv[1])
-if not (candidate / ".codex-plugin" / "plugin.template.json").is_file():
+${recordCandidate}if not (candidate / ".codex-plugin" / "plugin.template.json").is_file():
     print("candidate template missing before additional validation", file=sys.stderr)
     raise SystemExit(9)
 print("baseline additional validator rejection", file=sys.stderr)
@@ -337,11 +344,17 @@ function adapterOperations(sandbox) {
 
 test('CLI-MODE-HELP-01 help modes', () => {
   withSandbox({ stubScripts: true }, (sandbox) => {
+    for (const tool of ['git', 'python3', 'codex', 'sh']) {
+      removeTool(sandbox, tool);
+    }
     for (const mode of ['--help', '-h']) {
-      const result = runCli(sandbox, [mode]);
+      const result = runCli(sandbox, [mode], {
+        SUPERPOWERS_CODEX: join(sandbox.root, 'missing-custom-codex'),
+      });
       assertCleanResult(result);
       assert.equal(result.stdout, USAGE);
       assert.equal(result.stderr, '');
+      assert.deepEqual(readDispatchLog(sandbox), []);
     }
   });
 });
@@ -531,6 +544,24 @@ test('CLI-PREFLIGHT-01 missing tools fail before dispatch', () => {
   }
 });
 
+test('CLI-ENV-CODEX-PREFLIGHT-01 custom Codex command satisfies launcher preflight', () => {
+  withSandbox({ stubScripts: true }, (sandbox) => {
+    const customCodex = writeNoopTool(sandbox, 'baseline-custom-codex');
+    removeTool(sandbox, 'codex');
+    const result = runCli(
+      sandbox,
+      ['probe'],
+      dispatchEnvironment(sandbox, {
+        SUPERPOWERS_CODEX: customCodex,
+      }),
+    );
+    assertCleanResult(result);
+    assert.equal(result.stdout, '');
+    assert.equal(result.stderr, '');
+    assertOnlyDispatch(sandbox, 'probe', []);
+  });
+});
+
 test('CLI-CHILD-STATUS-01 delegated child status is preserved', () => {
   withSandbox({ stubScripts: true }, (sandbox) => {
     const result = runCli(
@@ -715,19 +746,8 @@ test('CLI-ENV-PREPARE-01 public prepare path defaults and overrides', () => {
     const upstream = createReleaseRepo(sandbox);
     const customCache = join(sandbox.root, 'custom-cache');
     const customPlugin = join(sandbox.root, 'custom-plugin');
-    const customTemplate = join(sandbox.root, 'custom-template.json');
     const customValidator = join(sandbox.root, 'custom-validator.py');
     const validatorMarker = join(sandbox.root, 'validator-ran');
-    writeFileSync(
-      customTemplate,
-      readFileSync(join(
-        sandbox.pkg,
-        'plugins',
-        'superpowers',
-        '.codex-plugin',
-        'plugin.template.json',
-      )),
-    );
     writeFileSync(
       customValidator,
       'from pathlib import Path\nimport os\n'
@@ -741,7 +761,6 @@ test('CLI-ENV-PREPARE-01 public prepare path defaults and overrides', () => {
       SPW_BASELINE_VALIDATOR_MARKER: validatorMarker,
       SUPERPOWERS_CACHE_DIR: customCache,
       SUPERPOWERS_PLUGIN_ROOT: customPlugin,
-      SUPERPOWERS_MANIFEST_TEMPLATE: customTemplate,
       SUPERPOWERS_VALIDATOR: customValidator,
       SUPERPOWERS_REF: 'v1.1.0',
       SUPERPOWERS_UPSTREAM_URL: upstream.REPO,
@@ -756,6 +775,108 @@ test('CLI-ENV-PREPARE-01 public prepare path defaults and overrides', () => {
       true,
     );
     assert.equal(readFileSync(validatorMarker, 'utf8'), 'ran\n');
+  });
+});
+
+test('CLI-ENV-MANIFEST-TEMPLATE-01 fallback template bytes and non-file rejection', () => {
+  withSandbox({}, (sandbox) => {
+    const upstream = createReleaseRepo(sandbox);
+    const defaultTemplate = join(
+      sandbox.pkg,
+      'plugins',
+      'superpowers',
+      '.codex-plugin',
+      'plugin.template.json',
+    );
+    const defaultTemplateBytes = readFileSync(defaultTemplate);
+    const result = runCliWithoutEnvironment(
+      sandbox,
+      ['prepare'],
+      ['SUPERPOWERS_MANIFEST_TEMPLATE'],
+      {
+        SPW_ADAPTER: sandbox.adapter,
+        SPW_BASELINE_ADAPTER_STATE: sandbox.adapterState,
+        SPW_BASELINE_ADAPTER_LOG: sandbox.adapterLog,
+        SUPERPOWERS_REF: 'v1.1.0',
+        SUPERPOWERS_UPSTREAM_URL: upstream.REPO,
+      },
+    );
+    assertCleanResult(result);
+    assert.deepEqual(
+      readFileSync(join(
+        sandbox.plugin,
+        '.codex-plugin',
+        'plugin.template.json',
+      )),
+      defaultTemplateBytes,
+    );
+  });
+
+  withSandbox({}, (sandbox) => {
+    const upstream = createReleaseRepo(sandbox);
+    const defaultTemplate = join(
+      sandbox.pkg,
+      'plugins',
+      'superpowers',
+      '.codex-plugin',
+      'plugin.template.json',
+    );
+    const customTemplate = join(sandbox.root, 'custom-template.json');
+    const customManifest = JSON.parse(readFileSync(defaultTemplate, 'utf8'));
+    const defaultTemplateBytes = readFileSync(defaultTemplate);
+    customManifest.description = 'behavioral baseline custom fallback';
+    customManifest.x_baseline_template = {
+      sentinel: 'custom-template-consumed',
+    };
+    const customTemplateBytes = Buffer.from(
+      `${JSON.stringify(customManifest, null, 2)}\n`,
+      'utf8',
+    );
+    writeFileSync(customTemplate, customTemplateBytes);
+
+    const result = runCli(sandbox, ['prepare'], {
+      SPW_ADAPTER: sandbox.adapter,
+      SPW_BASELINE_ADAPTER_STATE: sandbox.adapterState,
+      SPW_BASELINE_ADAPTER_LOG: sandbox.adapterLog,
+      SUPERPOWERS_MANIFEST_TEMPLATE: customTemplate,
+      SUPERPOWERS_REF: 'v1.1.0',
+      SUPERPOWERS_UPSTREAM_URL: upstream.REPO,
+    });
+    assertCleanResult(result);
+    assert.notDeepEqual(customTemplateBytes, defaultTemplateBytes);
+    assert.deepEqual(
+      readFileSync(join(
+        sandbox.plugin,
+        '.codex-plugin',
+        'plugin.template.json',
+      )),
+      customTemplateBytes,
+    );
+  });
+
+  withSandbox({}, (sandbox) => {
+    const upstream = createReleaseRepo(sandbox);
+    const nonFileTemplate = join(sandbox.root, 'non-file-template');
+    mkdirSync(nonFileTemplate);
+    const previous = snapshotTree(sandbox.plugin);
+    const result = runCli(sandbox, ['prepare'], {
+      SPW_ADAPTER: sandbox.adapter,
+      SPW_BASELINE_ADAPTER_STATE: sandbox.adapterState,
+      SPW_BASELINE_ADAPTER_LOG: sandbox.adapterLog,
+      SUPERPOWERS_MANIFEST_TEMPLATE: nonFileTemplate,
+      SUPERPOWERS_REF: 'v1.1.0',
+      SUPERPOWERS_UPSTREAM_URL: upstream.REPO,
+    });
+    assertCleanResult(result, 1);
+    assert.equal(result.stdout, '');
+    assert.equal(
+      result.stderr,
+      `error: missing fallback manifest template: ${nonFileTemplate}\n`,
+    );
+    assert.deepEqual(adapterOperations(sandbox), []);
+    assert.equal(existsSync(join(sandbox.adapterState, 'state.json')), false);
+    assert.deepEqual(snapshotTree(sandbox.plugin), previous);
+    assertNoInvocationPrepareWorkspace(dirname(sandbox.plugin));
   });
 });
 
@@ -1147,6 +1268,30 @@ test('PROVENANCE-BYTES-01 prepare writes canonical provenance bytes', () => {
       ),
     );
   });
+
+  withSandbox({}, (sandbox) => {
+    const upstream = createReleaseRepo(sandbox, 'raw upstream "quoted"');
+    const result = runCli(sandbox, ['prepare'], {
+      SPW_ADAPTER: sandbox.adapter,
+      SPW_BASELINE_ADAPTER_STATE: sandbox.adapterState,
+      SPW_BASELINE_ADAPTER_LOG: sandbox.adapterLog,
+      SUPERPOWERS_REF: upstream.RAW_COMMIT,
+      SUPERPOWERS_UPSTREAM_URL: upstream.REPO,
+    });
+    assertCleanResult(result);
+    const escapedSource = JSON.stringify(upstream.REPO).slice(1, -1);
+    assert.deepEqual(
+      readFileSync(join(sandbox.plugin, '.superpowers-upstream.json')),
+      substitutedFixtureBytes(
+        fixturePath('provenance', 'valid-commit.json'),
+        [
+          ['https://example.invalid/superpowers.git', escapedSource],
+          ['d884ae04edebef577e82ff7c4e143debd0bbec99', upstream.RAW_COMMIT],
+          ['"6.1.1"', '"1.0.0"'],
+        ],
+      ),
+    );
+  });
 });
 
 test('PREPARE-VALIDATE-01 validation completes before activation', () => {
@@ -1189,6 +1334,7 @@ test('FS-ATOMIC-01 failed prepare preserves the previous generated tree', () => 
   withSandbox({}, (sandbox) => {
     const upstream = createReleaseRepo(sandbox);
     writeFileSync(join(sandbox.plugin, 'preexisting-sentinel'), 'preserve me\n');
+    const candidateRecord = join(sandbox.work, 'atomic-candidate-path');
     const previous = snapshotTree(sandbox.plugin);
     const result = runCli(sandbox, ['prepare'], {
       SPW_ADAPTER: sandbox.adapter,
@@ -1199,10 +1345,19 @@ test('FS-ATOMIC-01 failed prepare preserves the previous generated tree', () => 
       SUPERPOWERS_VALIDATOR: writeFailingValidator(
         sandbox,
         'reject-atomic-candidate.py',
+        candidateRecord,
       ),
     });
     assertCleanResult(result, 1);
     assert.match(result.stderr, /error: additional plugin validation failed/);
+    const candidate = readFileSync(candidateRecord, 'utf8').trimEnd();
+    const candidateWorkspace = dirname(candidate);
+    assert.equal(basename(candidate), basename(sandbox.plugin));
+    assert.equal(dirname(candidateWorkspace), dirname(sandbox.plugin));
+    assert.match(
+      basename(candidateWorkspace),
+      /^\.superpowers\.prepare\.[A-Za-z0-9]{6}$/,
+    );
     assert.deepEqual(snapshotTree(sandbox.plugin), previous);
     assertNoInvocationPrepareWorkspace(join(sandbox.pkg, 'plugins'));
   });
