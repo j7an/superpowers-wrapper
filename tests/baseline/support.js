@@ -96,8 +96,10 @@ const PATH_ENVIRONMENT_VARIABLES = new Set([
   'SPW_BASELINE_ADAPTER_STATE',
   'SPW_BASELINE_ADAPTER_LOG',
   'SPW_BASELINE_DISPATCH_LOG',
+  'SPW_BASELINE_GIT_LOG',
   'SPW_BASELINE_RUNTIME_ADAPTER',
   'SPW_BASELINE_SANDBOX_ROOT',
+  'SPW_BASELINE_VALIDATOR_MARKER',
 ]);
 
 function hostExecutable(name) {
@@ -126,7 +128,7 @@ function registeredRoot(sandbox) {
     && REGISTERED_SANDBOXES.get(sandbox)
   );
   if (!root) throw new Error('unregistered sandbox');
-  if (!Object.isFrozen(sandbox) || sandbox.root !== root) {
+  if (sandbox.root !== root) {
     throw new Error('invalid registered sandbox root');
   }
   return root;
@@ -178,16 +180,6 @@ function assertContainedPath(sandbox, pathValue, label) {
   return pathValue;
 }
 
-function isPathEnvironmentVariable(name) {
-  return (
-    PATH_ENVIRONMENT_VARIABLES.has(name)
-    || (
-      /^(?:SUPERPOWERS|SPW_BASELINE)_/.test(name)
-      && /(?:_ADAPTER|_CODEX|_DIR|_FILE|_LOG|_PATH|_ROOT|_TEMPLATE|_VALIDATOR)$/.test(name)
-    )
-  );
-}
-
 function validateEnvironment(sandbox, environment, cwd) {
   if (environment.PATH !== sandbox.bin) {
     throw new Error('PATH must equal the controlled sandbox tool directory');
@@ -196,7 +188,7 @@ function validateEnvironment(sandbox, environment, cwd) {
     throw new Error('SPW_BASELINE_SANDBOX_ROOT must equal sandbox root');
   }
   for (const [name, value] of Object.entries(environment)) {
-    if (!isPathEnvironmentVariable(name) || value === '') continue;
+    if (!PATH_ENVIRONMENT_VARIABLES.has(name) || value === '') continue;
     if (
       name === 'SUPERPOWERS_CODEX'
       && !value.includes('/')
@@ -360,10 +352,9 @@ function createSandbox({ stubScripts = false } = {}) {
   for (const tool of SANDBOX_TOOLS) {
     linkHostTool(sandbox.bin, tool);
   }
-  const registered = Object.freeze(sandbox);
-  REGISTERED_SANDBOXES.set(registered, root);
-  if (stubScripts) installDispatchStubs(registered);
-  return registered;
+  REGISTERED_SANDBOXES.set(sandbox, root);
+  if (stubScripts) installDispatchStubs(sandbox);
+  return sandbox;
 }
 
 function baseEnvironment(sandbox, overrides = {}, cwd = sandbox.work) {
@@ -476,14 +467,11 @@ function fixturePath(...parts) {
 export {
   COMMANDS,
   PASSTHROUGH_VARIABLES,
-  ROOT,
-  SANDBOX_TOOLS,
   baseEnvironment,
   clearDispatchLog,
   createSandbox,
   destroySandbox,
   fixturePath,
-  installDispatchStubs,
   readDispatchLog,
   removeTool,
   runCli,
