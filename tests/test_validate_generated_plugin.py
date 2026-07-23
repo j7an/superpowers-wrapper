@@ -618,6 +618,13 @@ class ValidatorTests(unittest.TestCase):
         self.expected["commit"] = "d884ae0"
         self.assert_rejected("commit must be 40 lowercase hexadecimal characters")
 
+        self.reset_candidate()
+        metadata = json.loads((self.plugin / ".superpowers-upstream.json").read_text())
+        metadata["commit"] = "D" * 40
+        self.write_metadata(metadata)
+        self.expected["commit"] = "D" * 40
+        self.assert_rejected("commit must be 40 lowercase hexadecimal characters")
+
 
 if __name__ == "__main__":
     unittest.main()

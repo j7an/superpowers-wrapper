@@ -642,6 +642,28 @@ class AdapterProtocolValidatorTests(unittest.TestCase):
             fragment="non-standard JSON constant: NaN",
             sentinels=("constant-stdout-sentinel", "constant-stderr-sentinel"),
         )
+        for constant in ("Infinity", "-Infinity"):
+            with self.subTest(constant=constant):
+                raw_payload = (
+                    '{"protocol":'
+                    + constant
+                    + ',"operation":"build","ok":true,'
+                    '"messages":['
+                    '{"channel":"stdout","text":"constant-stdout-sentinel"},'
+                    '{"channel":"stderr","text":"constant-stderr-sentinel"}'
+                    '],"result":{},"error":null}'
+                )
+                result = validate_raw(raw_payload, "build")
+                self.assert_rejected_result(
+                    result,
+                    sentinels=(
+                        "constant-stdout-sentinel",
+                        "constant-stderr-sentinel",
+                    ),
+                )
+                self.assertIn(
+                    f"non-standard JSON constant: {constant}", result.stderr
+                )
 
     def test_rejects_duplicate_object_keys_recursively_without_replay(self) -> None:
         cases = (
