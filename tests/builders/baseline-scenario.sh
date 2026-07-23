@@ -125,7 +125,15 @@ EOF
     cat > "$previous_tree/.codex-plugin/plugin.json" <<'EOF'
 {
   "name": "superpowers",
-  "version": "1.0.0+manager.0123456",
+  "version": "1.1.0+manager.0123456",
+  "description": "Previously accepted baseline plugin",
+  "skills": "./skills/"
+}
+EOF
+    cat > "$previous_tree/.codex-plugin/plugin.template.json" <<'EOF'
+{
+  "name": "superpowers",
+  "version": "1.1.0+manager.0123456",
   "description": "Previously accepted baseline plugin",
   "skills": "./skills/"
 }
