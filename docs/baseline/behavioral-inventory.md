@@ -234,6 +234,7 @@ that contract rather than restating or redefining its six-key envelope.
 | `GENERATED-FALLBACK-01` | The fallback template is used only when upstream has no manifest; the generated fallback keeps manager-owned `version` and `skills` and has neither a hook declaration nor `hooks/`. |
 | `GENERATED-HOOKS-FORBID-01` | Upstream exact `hooks: {}` forbids generated `hooks/`. Manifest-less fallback also has no hook declaration and forbids generated `hooks/`. |
 | `GENERATED-HOOKS-DEFAULT-01` | Upstream absent `hooks` or empty array uses default discovery: copy `hooks/` only when upstream has regular `hooks/hooks.json`; generated default-discovered hooks must contain that file. |
+| `GENERATED-HOOKS-DEFAULT-LAYOUT-01` | Default-discovered hooks produce the complete canonical path layout recorded by the default-hooks golden fixture. |
 | `GENERATED-HOOKS-DECLARED-01` | Valid active upstream string/path-list declarations materialize the declared contained files and valid hook subtree; valid active object/object-list declarations copy a present valid hook subtree. |
 
 Canonical no-hooks form:

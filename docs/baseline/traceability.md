@@ -103,6 +103,7 @@ selectors or intentionally update the inventory, test, and this map together.
 | `GENERATED-FALLBACK-01` | Manifest-less fallback form | `tests/test_prepare_with_fake_upstream.sh::# BASELINE CASE: GENERATED-FALLBACK-01 manifest-less upstream uses manager fallback` | — |
 | `GENERATED-HOOKS-FORBID-01` | Hook-free policies | `tests/test_prepare_with_fake_upstream.sh::# BASELINE CASE: GENERATED-HOOKS-FORBID-01 explicit empty and fallback stay hook-free` | `tests/fixtures/baseline/manifests/upstream-empty-hooks.json` |
 | `GENERATED-HOOKS-DEFAULT-01` | Default hook discovery | `tests/test_prepare_with_fake_upstream.sh::# BASELINE CASE: GENERATED-HOOKS-DEFAULT-01 absent and empty-array default discovery` | `tests/fixtures/baseline/manifests/upstream-default-hooks.json` |
+| `GENERATED-HOOKS-DEFAULT-LAYOUT-01` | Complete default-discovered layout | `tests/test_prepare_with_fake_upstream.sh::# BASELINE CASE: GENERATED-HOOKS-DEFAULT-01 absent and empty-array default discovery` | `tests/fixtures/baseline/generated-tree/default-hooks.txt` |
 | `GENERATED-HOOKS-DECLARED-01` | Active declared hooks | `tests/test_prepare_with_fake_upstream.sh::# BASELINE CASE: GENERATED-HOOKS-DECLARED-01 declared path and inline hook forms` | `tests/fixtures/baseline/generated-tree/declared-hooks.txt` |
 | `FS-ATOMIC-01` | Atomic prepare activation | `tests/baseline/cli-parity.test.js::FS-ATOMIC-01 failed prepare preserves the previous generated tree` | `tests/builders/baseline-scenario.sh` |
 | `FS-ATOMIC-SWAP-01` | Failed activation restoration | `tests/test_prepare_with_fake_upstream.sh::# BASELINE CASE: FS-ATOMIC-SWAP-01 failed activation restores the prior tree` | — |
@@ -116,7 +117,7 @@ selectors or intentionally update the inventory, test, and this map together.
 | `FS-SELECTION-UNPIN-TYPES-01` | Unpin path types | `tests/test_selection_commands.sh::# BASELINE CASE: FS-SELECTION-UNPIN-TYPES-01 unpin rejects unsafe path types` | — |
 | `SEL-READER-PARENT-01` | Symlinked selection parent | `tests/test_selection_state.py::test_read_rejects_absent_state_below_symlinked_config_directory` | — |
 | `PREPARE-VALIDATE-01` | Validate before activation | `tests/baseline/cli-parity.test.js::PREPARE-VALIDATE-01 validation completes before activation` | `tests/builders/baseline-scenario.sh` |
-| `PREPARE-DETERMINISTIC-01` | Deterministic prepare output | `tests/test_prepare_with_fake_upstream.sh::# BASELINE CASE: GENERATED-HOOKS-DEFAULT-01 absent and empty-array default discovery` | `tests/fixtures/baseline/generated-tree/default-hooks.txt` |
+| `PREPARE-DETERMINISTIC-01` | Deterministic prepare output | `tests/baseline/cli-parity.test.js::PREPARE-TREE-01 prepare creates the canonical generated tree` | `tests/fixtures/baseline/generated-tree/no-hooks.txt` |
 | `PROBE-READONLY-01` | Read-only probe | `tests/baseline/cli-parity.test.js::PROBE-READONLY-01 probe is read-only` | `tests/builders/baseline-scenario.sh` |
 | `PROBE-FAIL-CLOSED-01` | Probe fails closed | `tests/test_probe.sh::# BASELINE CASE: PROBE-FAIL-CLOSED-01 invalid selection and adapter evidence fail closed` | — |
 | `INSTALL-ORDER-01` | Install ordering | `tests/baseline/cli-parity.test.js::INSTALL-ORDER-01 install prepares and validates before adapter mutation` | `tests/builders/baseline-scenario.sh` |
