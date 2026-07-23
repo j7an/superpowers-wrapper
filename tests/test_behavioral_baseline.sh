@@ -12,4 +12,5 @@ command -v node >/dev/null 2>&1 || {
 node --test \
   "$root/tests/baseline/fixture-contract.test.js" \
   "$root/tests/baseline/cli-parity.test.js" \
-  "$root/tests/baseline/packaged-cli.test.js"
+  "$root/tests/baseline/packaged-cli.test.js" \
+  "$root/tests/baseline/traceability.test.js"
