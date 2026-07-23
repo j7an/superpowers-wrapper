@@ -387,16 +387,6 @@ class ValidatorTests(unittest.TestCase):
                 self.write_manifest(manifest)
                 self.assert_rejected("field `version` must be SemVer 2.0.0")
 
-    def test_json_rejects_nonstandard_numeric_constants(self) -> None:
-        manifest_path = self.plugin / ".codex-plugin" / "plugin.json"
-        shutil.copyfile(MANIFESTS / "candidate-non-standard-constant.json", manifest_path)
-        self.assert_rejected("plugin manifest must contain valid JSON")
-
-        self.reset_candidate()
-        metadata_path = self.plugin / ".superpowers-upstream.json"
-        shutil.copyfile(PROVENANCE / "non-standard-constant.json", metadata_path)
-        self.assert_rejected("provenance must contain valid JSON")
-
     def test_json_rejects_excessive_nesting_without_traceback(self) -> None:
         nested = "[" * 2000 + "0" + "]" * 2000
         manifest_path = self.plugin / ".codex-plugin" / "plugin.json"

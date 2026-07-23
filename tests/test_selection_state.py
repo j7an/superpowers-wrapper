@@ -167,7 +167,7 @@ class SelectionStateTests(unittest.TestCase):
             with self.subTest(raw=raw):
                 self.assert_read_fails(raw)
 
-    def test_read_rejects_non_object_constants_and_excessive_nesting(self) -> None:
+    def test_read_rejects_non_object_and_constants(self) -> None:
         for raw in (
             self.fixture_text("wrong-top-level-type.json"),
             '"value"',
@@ -178,8 +178,6 @@ class SelectionStateTests(unittest.TestCase):
         ):
             with self.subTest(raw=raw):
                 self.assert_read_fails(raw)
-        self.assert_read_fails(self.fixture_text("depth-257.json"), "nesting")
-
     def test_read_enforces_exact_nesting_boundary(self) -> None:
         at_limit = "[" * 256 + "0" + "]" * 256
         self.assert_read_fails(at_limit, "selection state must be a JSON object")

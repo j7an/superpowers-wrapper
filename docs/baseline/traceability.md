@@ -58,7 +58,7 @@ selectors or intentionally update the inventory, test, and this map together.
 | `REF-PIN-CLEANUP-01` | Interrupted pin cleanup | `tests/test_selection_commands.sh::# BASELINE CASE: REF-PIN-CLEANUP-01 interrupted pin proof cleans only its workspace` | — |
 | `PROVENANCE-BYTES-01` | Canonical tag and raw-commit provenance bytes | `tests/baseline/cli-parity.test.js::PROVENANCE-BYTES-01 prepare writes canonical provenance bytes` | `tests/fixtures/baseline/provenance/valid-commit.json` |
 | `SEL-READER-DUPLICATES-01` | Selection duplicate keys | `tests/test_selection_state.py::test_read_rejects_duplicate_unknown_missing_and_inconsistent_fields` | `tests/fixtures/baseline/selection/duplicate-key.json` |
-| `SEL-READER-CONSTANTS-01` | Selection constants | `tests/test_selection_state.py::test_read_rejects_non_object_constants_and_excessive_nesting` | `tests/fixtures/baseline/selection/non-standard-constant.json` |
+| `SEL-READER-CONSTANTS-01` | Selection constants | `tests/test_selection_state.py::test_read_rejects_non_object_and_constants` | `tests/fixtures/baseline/selection/non-standard-constant.json` |
 | `SEL-READER-DEPTH-01` | Selection depth 256 | `tests/test_selection_state.py::test_read_enforces_exact_nesting_boundary` | `tests/fixtures/baseline/selection/depth-257.json` |
 | `SEL-READER-BYTES-01` | Selection has no byte cap | `tests/test_selection_state.py::test_read_has_no_input_byte_limit` | `tests/fixtures/baseline/selection/track-latest.json` |
 | `SEL-READER-PATHS-01` | Selection path types | `tests/test_selection_state.py::test_read_rejects_symlink_directory_and_fifo_paths` | — |
