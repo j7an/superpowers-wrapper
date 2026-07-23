@@ -1,17 +1,26 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import {
+  existsSync,
+  readFileSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { join } from 'node:path';
 import test from 'node:test';
 
 import {
   COMMANDS,
   PASSTHROUGH_VARIABLES,
+  ROOT,
+  baseEnvironment,
   clearDispatchLog,
   createSandbox,
   destroySandbox,
   readDispatchLog,
   removeTool,
   runCli,
+  runScenario,
   writeNoopTool,
 } from './support.js';
 
@@ -253,10 +262,12 @@ test('CLI-PREFLIGHT-01 missing tools fail before dispatch', () => {
         );
         assertCleanResult(result, 1);
         assert.equal(result.stdout, '');
-        assert.match(
-          result.stderr,
-          new RegExp(`required command not found: ${tool}`),
-        );
+        const diagnostic = tool === 'codex'
+          ? 'error: required command not found: codex — install the Codex CLI or set SUPERPOWERS_CODEX\n'
+          : tool === 'sh'
+            ? 'error: required command not found: sh\n'
+            : `error: required command not found: ${tool} — install ${tool} and re-run\n`;
+        assert.equal(result.stderr, diagnostic);
         assert.deepEqual(readDispatchLog(sandbox), []);
       });
     }
@@ -316,5 +327,304 @@ test('CLI-ENV-01 ten SUPERPOWERS variables pass through', () => {
     assert.deepEqual(record.xdg_env, {});
     assert.deepEqual(record.npm_env, {});
     assert.deepEqual(record.codex_env, {});
+  });
+});
+
+test('sandbox tool allowlist runs a real command and scenario builder', () => {
+  withSandbox({}, (sandbox) => {
+    const cli = runCli(sandbox, ['unpin']);
+    assertCleanResult(cli);
+    const fallback = readFileSync(
+      join(sandbox.pkg, 'config', 'upstream-ref'),
+      'utf8',
+    ).trim();
+    assert.equal(
+      cli.stdout,
+      `no saved upstream selection; packaged fallback is ${fallback}\n`,
+    );
+    assert.equal(cli.stderr, '');
+
+    const destination = join(sandbox.root, 'scenario');
+    const scenario = runScenario(sandbox, 'git-release-repo', destination);
+    assertCleanResult(scenario);
+    assert.match(scenario.stdout, new RegExp(`^REPO=${destination}\\n`));
+    assert.equal(existsSync(join(destination, '.git')), true);
+  });
+});
+
+test('stateful build delegates to the copied runtime adapter', () => {
+  withSandbox({}, (sandbox) => {
+    const upstream = join(sandbox.root, 'upstream');
+    const scenario = runScenario(
+      sandbox,
+      'git-release-repo',
+      upstream,
+    );
+    assertCleanResult(scenario);
+
+    const result = runCli(
+      sandbox,
+      ['prepare'],
+      {
+        SPW_ADAPTER: sandbox.adapter,
+        SPW_BASELINE_ADAPTER_STATE: sandbox.adapterState,
+        SPW_BASELINE_ADAPTER_LOG: sandbox.adapterLog,
+        SUPERPOWERS_REF: 'v1.1.0',
+        SUPERPOWERS_UPSTREAM_URL: upstream,
+      },
+    );
+    assertCleanResult(result);
+    assert.equal(
+      existsSync(join(sandbox.plugin, '.codex-plugin', 'plugin.json')),
+      true,
+    );
+    assert.equal(
+      existsSync(join(
+        sandbox.plugin,
+        '.codex-plugin',
+        'plugin.template.json',
+      )),
+      true,
+    );
+    assert.equal(
+      existsSync(join(sandbox.adapterState, 'state.json')),
+      false,
+    );
+    assert.equal(readFileSync(sandbox.adapterLog, 'utf8'), 'build\n');
+  });
+});
+
+test('sandbox paths and copied adapter are immutable and contained', () => {
+  withSandbox({}, (sandbox) => {
+    assert.equal(Object.isFrozen(sandbox), true);
+    for (const field of [
+      'pkg',
+      'bin',
+      'home',
+      'tmp',
+      'config',
+      'cache',
+      'plugin',
+      'codex',
+      'git',
+      'gitConfig',
+      'work',
+      'adapter',
+      'runtimeAdapter',
+      'adapterState',
+      'adapterLog',
+      'dispatchLog',
+    ]) {
+      assert.equal(
+        sandbox[field].startsWith(`${sandbox.root}/`),
+        true,
+        `${field} must be beneath sandbox.root`,
+      );
+    }
+    assert.throws(() => {
+      sandbox.root = '/private/tmp/not-the-sandbox';
+    }, TypeError);
+  });
+});
+
+test('sandbox runners reject outside paths but preserve scalar overrides', () => {
+  const sandbox = createSandbox();
+  const outside = createSandbox();
+  try {
+    assert.throws(
+      () => runCli(sandbox, ['--version'], {}, { cwd: outside.work }),
+      /outside sandbox root/,
+    );
+    assert.throws(
+      () => runCli(
+        sandbox,
+        ['--version'],
+        { SUPERPOWERS_CACHE_DIR: outside.cache },
+      ),
+      /SUPERPOWERS_CACHE_DIR.*outside sandbox root/,
+    );
+    assert.throws(
+      () => runScenario(
+        sandbox,
+        'broken-symlink',
+        join(outside.root, 'outside-scenario'),
+      ),
+      /scenario destination.*outside sandbox root/,
+    );
+    const brokenEscape = join(sandbox.root, 'broken-escape');
+    symlinkSync(join(outside.root, 'missing-cache'), brokenEscape);
+    assert.throws(
+      () => runCli(
+        sandbox,
+        ['--version'],
+        { SUPERPOWERS_CACHE_DIR: brokenEscape },
+      ),
+      /SUPERPOWERS_CACHE_DIR.*outside sandbox root|unresolvable symlink/,
+    );
+
+    const result = runCli(
+      sandbox,
+      ['--version'],
+      {
+        SUPERPOWERS_REF: 'v9.8.7-rc.1',
+        SUPERPOWERS_UPSTREAM_URL: 'https://example.invalid/upstream.git',
+      },
+    );
+    assertCleanResult(result);
+  } finally {
+    destroySandbox(sandbox);
+    destroySandbox(outside);
+  }
+});
+
+test('sandbox cleanup rejects unregistered deletion targets', () => {
+  const sandbox = createSandbox();
+  const victim = createSandbox();
+  try {
+    assert.throws(
+      () => destroySandbox({ ...sandbox, root: victim.root }),
+      /unregistered sandbox/,
+    );
+    assert.equal(existsSync(victim.root), true);
+  } finally {
+    if (existsSync(sandbox.root)) destroySandbox(sandbox);
+    if (existsSync(victim.root)) destroySandbox(victim);
+  }
+});
+
+test('stateful adapter failures use protocol-v1 envelopes', () => {
+  withSandbox({}, (sandbox) => {
+    const unknown = spawnSync(
+      sandbox.adapter,
+      ['unknown-operation'],
+      {
+        cwd: sandbox.work,
+        env: baseEnvironment(sandbox, {
+          SPW_BASELINE_ADAPTER_STATE: sandbox.adapterState,
+        }),
+        encoding: 'utf8',
+      },
+    );
+    assertCleanResult(unknown, 1);
+    assert.equal(unknown.stderr, '');
+    assert.deepEqual(JSON.parse(unknown.stdout), {
+      protocol: 1,
+      operation: 'unknown-operation',
+      ok: false,
+      messages: [],
+      result: null,
+      error: {
+        code: 'unsupported-operation',
+        message: 'unsupported adapter operation: unknown-operation',
+        hints: [],
+      },
+    });
+
+    const invalidRuntime = spawnSync(
+      sandbox.adapter,
+      ['build'],
+      {
+        cwd: sandbox.work,
+        env: baseEnvironment(sandbox, {
+          SPW_BASELINE_ADAPTER_STATE: sandbox.adapterState,
+          SPW_BASELINE_RUNTIME_ADAPTER: sandbox.work,
+        }),
+        encoding: 'utf8',
+      },
+    );
+    assertCleanResult(invalidRuntime, 1);
+    assert.equal(invalidRuntime.stderr, '');
+    assert.deepEqual(JSON.parse(invalidRuntime.stdout).error, {
+      code: 'invalid-state',
+      message: 'baseline runtime adapter must be an absolute regular file',
+      hints: [],
+    });
+
+    const outsideRuntime = spawnSync(
+      sandbox.adapter,
+      ['build'],
+      {
+        cwd: sandbox.work,
+        env: {
+          ...baseEnvironment(sandbox, {
+            SPW_BASELINE_ADAPTER_STATE: sandbox.adapterState,
+          }),
+          SPW_BASELINE_RUNTIME_ADAPTER: join(
+            ROOT,
+            'scripts',
+            'adapters',
+            'codex',
+            'adapter',
+          ),
+        },
+        encoding: 'utf8',
+      },
+    );
+    assertCleanResult(outsideRuntime, 1);
+    assert.equal(outsideRuntime.stderr, '');
+    assert.deepEqual(JSON.parse(outsideRuntime.stdout).error, {
+      code: 'invalid-state',
+      message: 'baseline runtime adapter must be contained in sandbox root',
+      hints: [],
+    });
+
+    const missingFingerprint = spawnSync(
+      sandbox.adapter,
+      ['install'],
+      {
+        cwd: sandbox.work,
+        env: baseEnvironment(sandbox, {
+          SPW_BASELINE_ADAPTER_STATE: sandbox.adapterState,
+        }),
+        encoding: 'utf8',
+      },
+    );
+    assertCleanResult(missingFingerprint, 1);
+    assert.deepEqual(JSON.parse(missingFingerprint.stdout).error, {
+      code: 'invalid-arguments',
+      message: 'SPW_BASELINE_FINGERPRINT is required for install',
+      hints: [],
+    });
+
+    const missingState = spawnSync(
+      sandbox.adapter,
+      ['inspect', '--view', 'ownership'],
+      {
+        cwd: sandbox.work,
+        env: baseEnvironment(sandbox, {
+          SPW_BASELINE_ADAPTER_STATE: join(sandbox.root, 'missing-state'),
+        }),
+        encoding: 'utf8',
+      },
+    );
+    assertCleanResult(missingState, 1);
+    assert.deepEqual(JSON.parse(missingState.stdout).error, {
+      code: 'invalid-state',
+      message: 'baseline adapter state directory is missing',
+      hints: [],
+    });
+
+    writeFileSync(
+      join(sandbox.adapterState, 'state.json'),
+      '{\n',
+      'utf8',
+    );
+    const malformedState = spawnSync(
+      sandbox.adapter,
+      ['inspect', '--view', 'ownership'],
+      {
+        cwd: sandbox.work,
+        env: baseEnvironment(sandbox, {
+          SPW_BASELINE_ADAPTER_STATE: sandbox.adapterState,
+        }),
+        encoding: 'utf8',
+      },
+    );
+    assertCleanResult(malformedState, 1);
+    assert.deepEqual(JSON.parse(malformedState.stdout).error, {
+      code: 'invalid-state',
+      message: 'baseline adapter state is malformed',
+      hints: [],
+    });
   });
 });

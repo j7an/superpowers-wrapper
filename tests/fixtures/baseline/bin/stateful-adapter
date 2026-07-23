@@ -48,7 +48,10 @@ def succeed(result):
 
 
 if operation not in allowed_operations:
-    raise SystemExit(f"error: unsupported adapter operation: {operation}")
+    fail(
+        "unsupported-operation",
+        f"unsupported adapter operation: {operation}",
+    )
 
 view = None
 if operation == "inspect":
@@ -147,7 +150,36 @@ def write_state():
 
 
 if operation == "build":
-    succeed({})
+    runtime_adapter_text = os.environ.get("SPW_BASELINE_RUNTIME_ADAPTER")
+    if not runtime_adapter_text:
+        fail("invalid-state", "SPW_BASELINE_RUNTIME_ADAPTER is required for build")
+    runtime_adapter = Path(runtime_adapter_text)
+    if not runtime_adapter.is_absolute() or not runtime_adapter.is_file():
+        fail("invalid-state", "baseline runtime adapter must be an absolute regular file")
+    sandbox_root_text = os.environ.get("SPW_BASELINE_SANDBOX_ROOT")
+    sandbox_root = Path(sandbox_root_text) if sandbox_root_text else None
+    if (
+        sandbox_root is None
+        or not sandbox_root.is_absolute()
+        or not sandbox_root.is_dir()
+        or os.path.commonpath((
+            str(runtime_adapter.resolve()),
+            str(sandbox_root.resolve()),
+        )) != str(sandbox_root.resolve())
+    ):
+        fail(
+            "invalid-state",
+            "baseline runtime adapter must be contained in sandbox root",
+        )
+    if not os.access(runtime_adapter, os.X_OK):
+        fail("invalid-state", "baseline runtime adapter is not executable")
+    try:
+        os.execv(
+            str(runtime_adapter),
+            [str(runtime_adapter), operation, *arguments],
+        )
+    except OSError:
+        fail("build-delegation-failed", "cannot execute baseline runtime adapter")
 elif operation == "install":
     desired_fingerprint = os.environ.get("SPW_BASELINE_FINGERPRINT")
     if not desired_fingerprint:

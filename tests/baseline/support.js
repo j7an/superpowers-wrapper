@@ -5,6 +5,7 @@ import {
   copyFileSync,
   cpSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -15,13 +16,46 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { delimiter, dirname, join } from 'node:path';
+import {
+  basename,
+  delimiter,
+  dirname,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+  sep,
+} from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));
 const FIXTURES = join(ROOT, 'tests', 'fixtures', 'baseline');
 const ADAPTER = join(FIXTURES, 'bin', 'stateful-adapter');
+const REGISTERED_SANDBOXES = new WeakMap();
+const SANDBOX_TOOLS = [
+  'node',
+  'sh',
+  'git',
+  'python3',
+  'awk',
+  'basename',
+  'cat',
+  'chmod',
+  'cp',
+  'cut',
+  'dirname',
+  'grep',
+  'ln',
+  'mkdir',
+  'mktemp',
+  'mv',
+  'rm',
+  'sed',
+  'sort',
+  'tail',
+  'tr',
+];
 const COMMANDS = [
   'pin',
   'track-latest',
@@ -44,6 +78,27 @@ const PASSTHROUGH_VARIABLES = [
   'SUPERPOWERS_INSTALLED_SEARCH_ROOT',
   'SUPERPOWERS_INSTALL_REFRESH_MODE',
 ];
+const PATH_ENVIRONMENT_VARIABLES = new Set([
+  'HOME',
+  'TMPDIR',
+  'GIT_CONFIG_GLOBAL',
+  'XDG_CONFIG_HOME',
+  'SUPERPOWERS_CODEX',
+  'SUPERPOWERS_CACHE_DIR',
+  'SUPERPOWERS_CONFIG_DIR',
+  'SUPERPOWERS_PLUGIN_ROOT',
+  'SUPERPOWERS_MANIFEST_TEMPLATE',
+  'SUPERPOWERS_VALIDATOR',
+  'SUPERPOWERS_INSTALLED_SEARCH_ROOT',
+  'SPW_ADAPTER',
+  'SPW_ADAPTER_RESPONSE_VALIDATOR',
+  'SPW_PACKAGE_ROOT',
+  'SPW_BASELINE_ADAPTER_STATE',
+  'SPW_BASELINE_ADAPTER_LOG',
+  'SPW_BASELINE_DISPATCH_LOG',
+  'SPW_BASELINE_RUNTIME_ADAPTER',
+  'SPW_BASELINE_SANDBOX_ROOT',
+]);
 
 function hostExecutable(name) {
   if (name === 'node') return realpathSync(process.execPath);
@@ -62,6 +117,114 @@ function hostExecutable(name) {
 
 function linkHostTool(bin, name) {
   symlinkSync(hostExecutable(name), join(bin, name));
+}
+
+function registeredRoot(sandbox) {
+  const root = (
+    sandbox
+    && typeof sandbox === 'object'
+    && REGISTERED_SANDBOXES.get(sandbox)
+  );
+  if (!root) throw new Error('unregistered sandbox');
+  if (!Object.isFrozen(sandbox) || sandbox.root !== root) {
+    throw new Error('invalid registered sandbox root');
+  }
+  return root;
+}
+
+function pathEntryExists(pathValue) {
+  try {
+    lstatSync(pathValue);
+    return true;
+  } catch (error) {
+    if (error && error.code === 'ENOENT') return false;
+    throw error;
+  }
+}
+
+function physicalPath(pathValue, label) {
+  let existing = resolve(pathValue);
+  const missing = [];
+  while (!pathEntryExists(existing)) {
+    const parent = dirname(existing);
+    if (parent === existing) break;
+    missing.unshift(basename(existing));
+    existing = parent;
+  }
+  try {
+    return resolve(realpathSync(existing), ...missing);
+  } catch (error) {
+    if (error && error.code === 'ENOENT') {
+      throw new Error(`${label} contains an unresolvable symlink`);
+    }
+    throw error;
+  }
+}
+
+function assertContainedPath(sandbox, pathValue, label) {
+  const root = registeredRoot(sandbox);
+  if (typeof pathValue !== 'string' || !isAbsolute(pathValue)) {
+    throw new Error(`${label} must be an absolute path within sandbox root`);
+  }
+  const candidate = physicalPath(pathValue, label);
+  const fromRoot = relative(root, candidate);
+  if (
+    fromRoot === '..'
+    || fromRoot.startsWith(`..${sep}`)
+    || isAbsolute(fromRoot)
+  ) {
+    throw new Error(`${label} resolves outside sandbox root`);
+  }
+  return pathValue;
+}
+
+function isPathEnvironmentVariable(name) {
+  return (
+    PATH_ENVIRONMENT_VARIABLES.has(name)
+    || (
+      /^(?:SUPERPOWERS|SPW_BASELINE)_/.test(name)
+      && /(?:_ADAPTER|_CODEX|_DIR|_FILE|_LOG|_PATH|_ROOT|_TEMPLATE|_VALIDATOR)$/.test(name)
+    )
+  );
+}
+
+function validateEnvironment(sandbox, environment, cwd) {
+  if (environment.PATH !== sandbox.bin) {
+    throw new Error('PATH must equal the controlled sandbox tool directory');
+  }
+  if (environment.SPW_BASELINE_SANDBOX_ROOT !== sandbox.root) {
+    throw new Error('SPW_BASELINE_SANDBOX_ROOT must equal sandbox root');
+  }
+  for (const [name, value] of Object.entries(environment)) {
+    if (!isPathEnvironmentVariable(name) || value === '') continue;
+    if (
+      name === 'SUPERPOWERS_CODEX'
+      && !value.includes('/')
+      && !value.includes('\\')
+    ) {
+      continue;
+    }
+    assertContainedPath(sandbox, value, name);
+  }
+
+  const source = environment.SUPERPOWERS_UPSTREAM_URL;
+  if (!source) return;
+  if (/^[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(source)) {
+    if (source.startsWith('file://')) {
+      assertContainedPath(
+        sandbox,
+        fileURLToPath(source),
+        'SUPERPOWERS_UPSTREAM_URL',
+      );
+    }
+    return;
+  }
+  if (/^[^/]+@[^:]+:.+/.test(source)) return;
+  assertContainedPath(
+    sandbox,
+    resolve(cwd, source),
+    'SUPERPOWERS_UPSTREAM_URL',
+  );
 }
 
 function copyRuntimePackage(pkg) {
@@ -131,6 +294,7 @@ PY
 }
 
 function installDispatchStubs(sandbox) {
+  registeredRoot(sandbox);
   for (const command of COMMANDS) {
     const script = join(sandbox.pkg, 'scripts', command);
     writeFileSync(script, dispatchStub(command), 'utf8');
@@ -139,7 +303,10 @@ function installDispatchStubs(sandbox) {
 }
 
 function writeNoopTool(sandbox, name = 'codex') {
+  registeredRoot(sandbox);
+  if (basename(name) !== name) throw new Error('tool name must be a basename');
   const tool = join(sandbox.bin, name);
+  assertContainedPath(sandbox, tool, 'sandbox tool');
   writeFileSync(tool, '#!/bin/sh\nexit 0\n', 'utf8');
   chmodSync(tool, 0o755);
   return tool;
@@ -157,8 +324,18 @@ function createSandbox({ stubScripts = false } = {}) {
     cache: join(root, 'cache'),
     plugin: join(root, 'plugin'),
     codex: join(root, 'codex'),
+    git: join(root, 'git'),
+    gitConfig: join(root, 'git', 'config'),
     work: join(root, 'work'),
-    adapter: ADAPTER,
+    adapter: join(root, 'bin', 'stateful-adapter'),
+    runtimeAdapter: join(
+      root,
+      'pkg',
+      'scripts',
+      'adapters',
+      'codex',
+      'adapter',
+    ),
     adapterState: join(root, 'adapter-state'),
     adapterLog: join(root, 'adapter.log'),
     dispatchLog: join(root, 'dispatch.log'),
@@ -171,24 +348,32 @@ function createSandbox({ stubScripts = false } = {}) {
     sandbox.config,
     sandbox.cache,
     sandbox.codex,
+    sandbox.git,
     sandbox.work,
     sandbox.adapterState,
   ]) {
     mkdirSync(directory, { recursive: true });
   }
   copyRuntimePackage(sandbox.pkg);
-  for (const tool of ['node', 'sh', 'git', 'python3']) {
+  copyFileSync(ADAPTER, sandbox.adapter);
+  chmodSync(sandbox.adapter, 0o755);
+  for (const tool of SANDBOX_TOOLS) {
     linkHostTool(sandbox.bin, tool);
   }
-  if (stubScripts) installDispatchStubs(sandbox);
-  return sandbox;
+  const registered = Object.freeze(sandbox);
+  REGISTERED_SANDBOXES.set(registered, root);
+  if (stubScripts) installDispatchStubs(registered);
+  return registered;
 }
 
-function baseEnvironment(sandbox, overrides = {}) {
-  return {
+function baseEnvironment(sandbox, overrides = {}, cwd = sandbox.work) {
+  assertContainedPath(sandbox, cwd, 'working directory');
+  const environment = {
     PATH: sandbox.bin,
     HOME: sandbox.home,
     TMPDIR: sandbox.tmp,
+    GIT_CONFIG_GLOBAL: sandbox.gitConfig,
+    GIT_CONFIG_NOSYSTEM: '1',
     SUPERPOWERS_CONFIG_DIR: sandbox.config,
     SUPERPOWERS_CACHE_DIR: sandbox.cache,
     SUPERPOWERS_PLUGIN_ROOT: sandbox.plugin,
@@ -197,11 +382,17 @@ function baseEnvironment(sandbox, overrides = {}) {
       'plugins/superpowers/.codex-plugin/plugin.template.json',
     ),
     SUPERPOWERS_INSTALLED_SEARCH_ROOT: sandbox.codex,
+    SPW_BASELINE_RUNTIME_ADAPTER: sandbox.runtimeAdapter,
+    SPW_BASELINE_SANDBOX_ROOT: sandbox.root,
     ...overrides,
   };
+  validateEnvironment(sandbox, environment, cwd);
+  return environment;
 }
 
 function runCli(sandbox, args = [], overrides = {}, options = {}) {
+  const cwd = options.cwd || sandbox.work;
+  assertContainedPath(sandbox, cwd, 'working directory');
   if (
     Object.hasOwn(overrides, 'SPW_ADAPTER')
     && !Object.hasOwn(overrides, 'SUPERPOWERS_CODEX')
@@ -213,8 +404,8 @@ function runCli(sandbox, args = [], overrides = {}, options = {}) {
     join(sandbox.bin, 'node'),
     [join(sandbox.pkg, 'bin', 'superpowers-manager.js'), ...args],
     {
-      cwd: options.cwd || sandbox.work,
-      env: baseEnvironment(sandbox, overrides),
+      cwd,
+      env: baseEnvironment(sandbox, overrides, cwd),
       encoding: 'utf8',
       maxBuffer: 16 * 1024 * 1024,
     },
@@ -222,6 +413,7 @@ function runCli(sandbox, args = [], overrides = {}, options = {}) {
 }
 
 function runScenario(sandbox, command, destination, overrides = {}) {
+  assertContainedPath(sandbox, destination, 'scenario destination');
   return spawnSync(
     join(sandbox.bin, 'sh'),
     [
@@ -239,6 +431,7 @@ function runScenario(sandbox, command, destination, overrides = {}) {
 }
 
 function readDispatchLog(sandbox) {
+  registeredRoot(sandbox);
   if (!existsSync(sandbox.dispatchLog)) return [];
   const text = readFileSync(sandbox.dispatchLog, 'utf8');
   return text
@@ -248,15 +441,19 @@ function readDispatchLog(sandbox) {
 }
 
 function clearDispatchLog(sandbox) {
+  registeredRoot(sandbox);
   writeFileSync(sandbox.dispatchLog, '', 'utf8');
 }
 
 function removeTool(sandbox, name) {
+  registeredRoot(sandbox);
+  if (basename(name) !== name) throw new Error('tool name must be a basename');
   const tool = join(sandbox.bin, name);
   if (existsSync(tool)) unlinkSync(tool);
 }
 
 function writeAdapterState(sandbox, state) {
+  registeredRoot(sandbox);
   const stateFile = join(sandbox.adapterState, 'state.json');
   writeFileSync(stateFile, `${JSON.stringify(state)}\n`, {
     encoding: 'utf8',
@@ -266,7 +463,10 @@ function writeAdapterState(sandbox, state) {
 }
 
 function destroySandbox(sandbox) {
-  rmSync(sandbox.root, { recursive: true, force: true });
+  const root = registeredRoot(sandbox);
+  assertContainedPath(sandbox, root, 'sandbox deletion target');
+  REGISTERED_SANDBOXES.delete(sandbox);
+  rmSync(root, { recursive: true, force: true });
 }
 
 function fixturePath(...parts) {
@@ -277,6 +477,7 @@ export {
   COMMANDS,
   PASSTHROUGH_VARIABLES,
   ROOT,
+  SANDBOX_TOOLS,
   baseEnvironment,
   clearDispatchLog,
   createSandbox,
