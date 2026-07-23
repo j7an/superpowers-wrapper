@@ -56,6 +56,13 @@ test_probe_status() {
   cp "$root/tests/fixtures/baseline/provenance/duplicate-key.json" "$strict_json"
   test "$(spw_json_get "$strict_json" source)" = \
     "https://wrong.invalid/repo"
+  printf '%s\n' '[]' > "$strict_json"
+  if (spw_json_get "$strict_json" commit) >/dev/null 2>&1; then
+    echo "strict provenance reader accepted a non-object" >&2
+    exit 1
+  fi
+  printf '%s\n' '{}' > "$strict_json"
+  test "$(spw_json_get "$strict_json" commit)" = ""
   python3 -S - \
     "$root/tests/fixtures/baseline/provenance/valid-commit.json" \
     "$strict_json" <<'PY'
@@ -105,6 +112,10 @@ PY
     "d884ae04edebef577e82ff7c4e143debd0bbec99"
   cp "$root/tests/fixtures/baseline/provenance/commit-7-hex.json" "$lenient_json"
   test "$(spw_metadata_commit_lenient_or_empty "$lenient_json")" = ""
+  for invalid in '{' '[]' '{}' '{"commit":7}' '{"commit":"not-a-commit"}'; do
+    printf '%s\n' "$invalid" > "$lenient_json"
+    test "$(spw_metadata_commit_lenient_or_empty "$lenient_json")" = ""
+  done
 
   assert_manifest_short() {
     version="$1"
@@ -181,6 +192,9 @@ PY
   assert_manifest_short "0.0.0-ref-feature-foo+manager.fedcba9" "fedcba9"
   assert_manifest_short "0.0.0-ref-042+manager.0123abc" "0123abc"
   assert_manifest_short "0.0.0+manager.896224c" "896224c"
+  assert_manifest_short "arbitrary+manager.release.d884ae0" "d884ae0"
+  assert_manifest_short "arbitrary.release.d884ae0" ""
+  assert_manifest_short "d884ae0" ""
   # The template's placeholder version is not a real fingerprint -> empty.
   assert_manifest_short "0.0.0+manager.template" ""
   assert_manifest_short "6.0.3+manager.abcxyz1" ""
@@ -542,6 +556,7 @@ update_control'
   grep -Fq -- "ls-remote --tags -- $tmpdir_physical/-upstream refs/tags/v*" "$git_log"
   assert_probe_tmp_empty
 
+  # BASELINE CASE: PROBE-FAIL-CLOSED-01 invalid selection and adapter evidence fail closed
   # Honest unsupported update control is reportable; execution or protocol
   # validation failures remain operational failures.
   : > "$adapter_log"

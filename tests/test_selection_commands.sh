@@ -111,6 +111,7 @@ for ref in "$bad_tag_cr" "$bad_tag_lf" "$bad_commit_lf"; do
   test "$(cat "$early_guard_config/selection.json")" = '{bad json'
 done
 
+# BASELINE CASE: REF-PIN-SOURCE-01 exact tag and raw commit pins prove selected source
 # Lightweight and annotated tags use only the exact tag namespace, with peeling.
 run_pin v1.0.0 >"$tmpdir/out"
 grep -Fxq "pinned upstream selection to v1.0.0 at $v1_commit" "$tmpdir/out"
@@ -279,6 +280,7 @@ if grep -Fq 'token@example.invalid' "$tmpdir/out"; then
   exit 1
 fi
 
+# BASELINE CASE: REF-PIN-CLEANUP-01 interrupted pin proof cleans only its workspace
 # A trapped exit cleans only the verifier workspace.
 signal_bin="$tmpdir/fetch-signal-bin"
 mkdir "$signal_bin"
@@ -450,6 +452,7 @@ SUPERPOWERS_CONFIG_DIR="$track_config" sh "$root/scripts/track-latest" extra \
   >"$tmpdir/out" 2>&1 || rc=$?
 test "$rc" -eq 2
 
+# BASELINE CASE: FS-SELECTION-UNPIN-TYPES-01 unpin rejects unsafe path types
 # unpin is parse-free and idempotent, removes only the exact regular file, and
 # names the packaged fallback plus active invocation overrides.
 unpin_config="$tmpdir/unpin-config"

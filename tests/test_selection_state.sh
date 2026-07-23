@@ -36,6 +36,7 @@ else
 fi
 chmod 700 "$permission_parent"
 
+# BASELINE CASE: SEL-LOCATION-01 selection location chain and fail-closed bases
 test "$(SUPERPOWERS_CONFIG_DIR="$tmpdir/explicit" spw_selection_config_dir)" = "$tmpdir/explicit"
 test "$(XDG_CONFIG_HOME="$tmpdir/xdg" HOME="$tmpdir/home" spw_selection_config_dir)" = "$tmpdir/xdg/superpowers-manager"
 test "$(XDG_CONFIG_HOME= HOME="$tmpdir/home" spw_selection_config_dir)" = "$tmpdir/home/.config/superpowers-manager"
@@ -128,6 +129,7 @@ assert_effective() {
   assert_exported_selection
 }
 
+# BASELINE CASE: SEL-PRECEDENCE-REF-01 complete ref precedence
 # Absent state: packaged defaults, then independent environment overrides.
 clear_overrides
 SUPERPOWERS_CONFIG_DIR="$absent_config"
@@ -248,6 +250,7 @@ spw_compute_effective_selection "$tmpdir/config-root" "$tmpdir/workspace"
 assert_effective environment override environment "$environment_source" \
   main main "$resolved_environment" ref
 
+# BASELINE CASE: SEL-REF-GENERIC-01 arbitrary environment ref fallback
 # Resolver output is parsed as data even when a mutable ref contains a glob.
 clear_overrides
 SUPERPOWERS_CONFIG_DIR="$absent_config"
@@ -273,6 +276,7 @@ assert_effective user-config pinned user-config "$saved_source" \
   "$pinned_commit" "$pinned_commit" "$pinned_commit" raw-commit
 test ! -s "$resolver_log"
 
+# BASELINE CASE: SEL-PRECEDENCE-VALIDATE-01 invalid saved state stops resolution
 # Invalid saved state fails before source validation can reach ref resolution.
 malformed_config="$tmpdir/malformed"
 mkdir -p "$malformed_config"

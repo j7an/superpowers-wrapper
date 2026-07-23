@@ -632,6 +632,13 @@ if spw_apply_manifest_overlay "$overlay_manifest" "9.8.7+manager.0123456" \
   exit 1
 fi
 grep -Fq 'non-standard numeric constant' "$tmpdir/overlay-constant.out"
+printf '%s\n' '[]' > "$overlay_manifest"
+if spw_apply_manifest_overlay "$overlay_manifest" "9.8.7+manager.0123456" \
+    >"$tmpdir/overlay-object.out" 2>&1; then
+  echo "manifest overlay accepted a non-object" >&2
+  exit 1
+fi
+grep -Fq 'manifest must be a JSON object' "$tmpdir/overlay-object.out"
 cp "$root/tests/fixtures/baseline/selection/depth-257.json" \
   "$overlay_manifest"
 if spw_apply_manifest_overlay "$overlay_manifest" "9.8.7+manager.0123456" \
@@ -821,6 +828,7 @@ grep -Fq "build --upstream-root $recorded_upstream_root" "$adapter_log"
 grep -Fq -- "--upstream-manifest-version 6.0.3" "$adapter_log"
 grep -Fq -- "--fallback-manifest $pkg/plugins/superpowers/.codex-plugin/plugin.template.json" "$adapter_log"
 
+# BASELINE CASE: CLI-ENV-PREPARE-PATHS-01 relative prepare paths use invocation cwd
 relative_workdir="$tmpdir/relative-workdir"
 relative_adapter_log="$tmpdir/relative-adapter.log"
 mkdir -p "$relative_workdir"
@@ -873,6 +881,7 @@ test -f "$tmpdir/out-latest/hooks/hooks-codex.json"
 test -f "$tmpdir/out-latest/hooks/session-start-codex"
 test -f "$tmpdir/out-latest/hooks/support/helper.txt"
 
+# BASELINE CASE: GENERATED-HOOKS-FORBID-01 explicit empty and fallback stay hook-free
 run_prepare_for_ref "hooks-empty-object" "out-hooks-empty-object"
 assert_manifest_json "out-hooks-empty-object" "/hooks" '{}'
 if [ -e "$tmpdir/out-hooks-empty-object/hooks" ]; then
@@ -880,6 +889,7 @@ if [ -e "$tmpdir/out-hooks-empty-object/hooks" ]; then
   exit 1
 fi
 
+# BASELINE CASE: GENERATED-HOOKS-DEFAULT-01 absent and empty-array default discovery
 run_prepare_for_ref "hooks-empty-array" "out-hooks-empty-array"
 assert_manifest_json "out-hooks-empty-array" "/hooks" '[]'
 test -f "$tmpdir/out-hooks-empty-array/hooks/hooks.json"
@@ -887,6 +897,7 @@ test -f "$tmpdir/out-hooks-empty-array/hooks/hooks-codex.json"
 test -f "$tmpdir/out-hooks-empty-array/hooks/session-start-codex"
 test -f "$tmpdir/out-hooks-empty-array/hooks/support/helper.txt"
 
+# BASELINE CASE: GENERATED-HOOKS-DECLARED-01 declared path and inline hook forms
 run_prepare_for_ref "hooks-string-array" "out-hooks-string-array"
 assert_manifest_json \
   "out-hooks-string-array" "/hooks" \
@@ -975,6 +986,7 @@ leading_zero_short=$(printf '%s' "$leading_zero_commit" | cut -c 1-7)
 assert_prepare_commit "out-leading-zero" "$leading_zero_commit"
 assert_prepare_version "out-leading-zero" "0.0.0-ref-042+manager.$leading_zero_short"
 
+# BASELINE CASE: GENERATED-FALLBACK-01 manifest-less upstream uses manager fallback
 run_prepare_for_ref "v5.0.0" "out-legacy"
 legacy_short=$(printf '%s' "$legacy_commit" | cut -c 1-7)
 assert_prepare_commit "out-legacy" "$legacy_commit"
@@ -991,6 +1003,7 @@ run_prepare_for_ref "$feature_commit" "out-raw"
 assert_prepare_commit "out-raw" "$feature_commit"
 assert_prepare_version "out-raw" "0.0.0+manager.$feature_short"
 
+# BASELINE CASE: GENERATED-WRONG-NAME-01 wrong upstream name is rejected
 assert_bad_manifest_error "out-bad-manifest"
 
 # BASELINE CASE: MANIFEST-READER-UPSTREAM-01 upstream manifest reader profile
@@ -1009,6 +1022,7 @@ assert_rejected_manifest_input "unreadable-manifest" "out-unreadable-manifest" "
 assert_rejected_manifest_input "unencodable-manifest-version" "out-unencodable-version" "cannot output JSON value from"
 assert_rejected_manifest_input "deeply-nested-json" "out-deeply-nested" "JSON nesting exceeds limit in"
 
+# BASELINE CASE: FS-HOOK-CONTAINMENT-01 unsafe hook paths and symlinks fail closed
 assert_hook_prepare_failure \
   "hooks-scalar" "out-hooks-scalar" \
   "hook classification failed: unsupported or mixed hooks declaration"
@@ -1168,6 +1182,51 @@ fi
   echo "built-in failure must preserve the previous generated tree" >&2
   exit 1
 }
+
+# BASELINE CASE: FS-ATOMIC-SWAP-01 failed activation restores the prior tree
+atomic_parent="$tmpdir/atomic-swap"
+atomic_live="$atomic_parent/live"
+atomic_candidate="$atomic_parent/candidate"
+atomic_bin="$atomic_parent/bin"
+atomic_count="$atomic_parent/mv-count"
+mkdir -p "$atomic_live" "$atomic_candidate" "$atomic_bin"
+printf '%s\n' 'prior tree' > "$atomic_live/sentinel"
+printf '%s\n' 'candidate tree' > "$atomic_candidate/sentinel"
+real_mv=$(command -v mv)
+cat > "$atomic_bin/mv" <<'SH'
+#!/bin/sh
+set -eu
+count=0
+if [ -f "$SPW_TEST_MV_COUNT" ]; then
+  count=$(cat "$SPW_TEST_MV_COUNT")
+fi
+count=$((count + 1))
+printf '%s\n' "$count" > "$SPW_TEST_MV_COUNT"
+if [ "$count" -eq 2 ]; then
+  exit 1
+fi
+exec "$SPW_TEST_REAL_MV" "$@"
+SH
+chmod +x "$atomic_bin/mv"
+atomic_rc=0
+PATH="$atomic_bin:$PATH" \
+SPW_TEST_MV_COUNT="$atomic_count" \
+SPW_TEST_REAL_MV="$real_mv" \
+  sh -c '
+    set -eu
+    . "$1/scripts/core/common.sh"
+    . "$1/scripts/core/lifecycle.sh"
+    spw_replace_generated_tree "$2" "$3"
+  ' sh "$root" "$atomic_candidate" "$atomic_live" \
+  >"$atomic_parent/out" 2>"$atomic_parent/err" || atomic_rc=$?
+[ "$atomic_rc" -eq 1 ]
+grep -Fq 'previous tree restored' "$atomic_parent/err"
+[ "$(cat "$atomic_live/sentinel")" = 'prior tree' ]
+[ ! -e "$atomic_candidate" ]
+if find "$atomic_parent" -maxdepth 1 -name '.superpowers.bak.*' -print | grep -q .; then
+  echo "failed activation left a backup tree" >&2
+  exit 1
+fi
 
 template_after=$(cksum "$template")
 if [ "$template_before" != "$template_after" ]; then

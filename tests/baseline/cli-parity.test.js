@@ -90,6 +90,21 @@ function assertOnlyDispatch(sandbox, command, argv) {
   );
 }
 
+function runCliWithoutEnvironment(sandbox, args, unsetNames, overrides = {}) {
+  const environment = baseEnvironment(sandbox, overrides);
+  for (const name of unsetNames) delete environment[name];
+  return spawnSync(
+    join(sandbox.bin, 'node'),
+    [join(sandbox.pkg, 'bin', 'superpowers-manager.js'), ...args],
+    {
+      cwd: sandbox.work,
+      env: environment,
+      encoding: 'utf8',
+      maxBuffer: 16 * 1024 * 1024,
+    },
+  );
+}
+
 function scenarioValues(result) {
   assertCleanResult(result);
   return Object.fromEntries(
@@ -441,6 +456,10 @@ test('CLI-PIN-REF-01 pin accepts exact tag or 40-hex commit only', () => {
     'v1.2.3-',
     'v1.2.3-01',
     'v1.2.3+build',
+    'main',
+    'latest-release',
+    'HEAD',
+    'refs/heads/main',
     '0123456789abcdef0123456789abcdef0123456',
     'g123456789abcdef0123456789abcdef01234567',
   ];
@@ -522,6 +541,45 @@ test('CLI-CHILD-STATUS-01 delegated child status is preserved', () => {
     assertCleanResult(result, 42);
     assertOnlyDispatch(sandbox, 'probe', []);
   });
+
+  withSandbox({ stubScripts: true }, (sandbox) => {
+    const script = join(sandbox.pkg, 'scripts', 'probe');
+    writeFileSync(
+      script,
+      '#!/bin/sh\nprintf "child stdout: %s\\n" "$SPW_CHILD_SENTINEL"\n'
+        + 'printf "child stderr\\n" >&2\nexit 7\n',
+      'utf8',
+    );
+    chmodSync(script, 0o755);
+    const result = runCli(sandbox, ['probe'], {
+      SPW_ADAPTER: sandbox.adapter,
+      SPW_CHILD_SENTINEL: 'inherited',
+    });
+    assertCleanResult(result, 7);
+    assert.equal(result.stdout, 'child stdout: inherited\n');
+    assert.equal(result.stderr, 'child stderr\n');
+  });
+
+  withSandbox({ stubScripts: true }, (sandbox) => {
+    const script = join(sandbox.pkg, 'scripts', 'probe');
+    writeFileSync(script, '#!/bin/sh\nkill -TERM $$\n', 'utf8');
+    chmodSync(script, 0o755);
+    const result = runCli(sandbox, ['probe'], {
+      SPW_ADAPTER: sandbox.adapter,
+    });
+    assertCleanResult(result, 1);
+  });
+
+  withSandbox({ stubScripts: true }, (sandbox) => {
+    const script = join(sandbox.pkg, 'scripts', 'probe');
+    writeFileSync(script, '#!/no/such/interpreter\n', 'utf8');
+    chmodSync(script, 0o755);
+    const result = runCli(sandbox, ['probe'], {
+      SPW_ADAPTER: sandbox.adapter,
+    });
+    assertCleanResult(result, 1);
+    assert.match(result.stderr, /^error: cannot run .*\/scripts\/probe: spawnSync .* ENOENT\n$/);
+  });
 });
 
 test('CLI-ENV-01 ten SUPERPOWERS variables pass through', () => {
@@ -565,6 +623,157 @@ test('CLI-ENV-01 ten SUPERPOWERS variables pass through', () => {
     assert.deepEqual(record.xdg_env, {});
     assert.deepEqual(record.npm_env, {});
     assert.deepEqual(record.codex_env, {});
+  });
+});
+
+test('CLI-ENV-LOCATION-01 public selection location chain', () => {
+  withSandbox({}, (sandbox) => {
+    const upstream = createReleaseRepo(sandbox);
+    const xdg = join(sandbox.root, 'xdg');
+    let result = runCliWithoutEnvironment(
+      sandbox,
+      ['pin', 'v1.0.0'],
+      ['SUPERPOWERS_CONFIG_DIR'],
+      {
+      XDG_CONFIG_HOME: xdg,
+      SUPERPOWERS_UPSTREAM_URL: upstream.REPO,
+      },
+    );
+    assertCleanResult(result);
+    assert.equal(
+      existsSync(join(xdg, 'superpowers-manager', 'selection.json')),
+      true,
+    );
+
+    const fallbackHome = join(sandbox.root, 'fallback-home');
+    mkdirSync(fallbackHome);
+    result = runCliWithoutEnvironment(
+      sandbox,
+      ['pin', 'v1.0.0'],
+      ['SUPERPOWERS_CONFIG_DIR', 'XDG_CONFIG_HOME'],
+      {
+        HOME: fallbackHome,
+        SUPERPOWERS_UPSTREAM_URL: upstream.REPO,
+      },
+    );
+    assertCleanResult(result);
+    assert.equal(
+      existsSync(join(
+        fallbackHome,
+        '.config',
+        'superpowers-manager',
+        'selection.json',
+      )),
+      true,
+    );
+
+    result = runCli(sandbox, ['track-latest'], {
+      SUPERPOWERS_CONFIG_DIR: '',
+    });
+    assertCleanResult(result, 1);
+    assert.match(result.stderr, /SUPERPOWERS_CONFIG_DIR must be absolute/);
+  });
+});
+
+test('CLI-ENV-PREPARE-01 public prepare path defaults and overrides', () => {
+  withSandbox({}, (sandbox) => {
+    const upstream = createReleaseRepo(sandbox);
+    const result = runCliWithoutEnvironment(
+      sandbox,
+      ['prepare'],
+      [
+        'SUPERPOWERS_CACHE_DIR',
+        'SUPERPOWERS_PLUGIN_ROOT',
+        'SUPERPOWERS_MANIFEST_TEMPLATE',
+        'SUPERPOWERS_VALIDATOR',
+      ],
+      {
+        SPW_ADAPTER: sandbox.adapter,
+        SPW_BASELINE_ADAPTER_STATE: sandbox.adapterState,
+        SPW_BASELINE_ADAPTER_LOG: sandbox.adapterLog,
+        SUPERPOWERS_REF: 'v1.1.0',
+        SUPERPOWERS_UPSTREAM_URL: upstream.REPO,
+      },
+    );
+    assertCleanResult(result);
+    assert.equal(
+      existsSync(join(sandbox.pkg, '.cache', 'upstream', 'superpowers', '.git')),
+      true,
+    );
+    assert.equal(
+      existsSync(join(sandbox.plugin, '.codex-plugin', 'plugin.json')),
+      true,
+    );
+    assert.equal(
+      existsSync(join(sandbox.plugin, '.codex-plugin', 'plugin.template.json')),
+      true,
+    );
+    assert.deepEqual(adapterOperations(sandbox), ['build']);
+  });
+
+  withSandbox({}, (sandbox) => {
+    const upstream = createReleaseRepo(sandbox);
+    const customCache = join(sandbox.root, 'custom-cache');
+    const customPlugin = join(sandbox.root, 'custom-plugin');
+    const customTemplate = join(sandbox.root, 'custom-template.json');
+    const customValidator = join(sandbox.root, 'custom-validator.py');
+    const validatorMarker = join(sandbox.root, 'validator-ran');
+    writeFileSync(
+      customTemplate,
+      readFileSync(join(
+        sandbox.pkg,
+        'plugins',
+        'superpowers',
+        '.codex-plugin',
+        'plugin.template.json',
+      )),
+    );
+    writeFileSync(
+      customValidator,
+      'from pathlib import Path\nimport os\n'
+        + 'Path(os.environ["SPW_BASELINE_VALIDATOR_MARKER"]).write_text("ran\\n")\n',
+      'utf8',
+    );
+    const result = runCli(sandbox, ['prepare'], {
+      SPW_ADAPTER: sandbox.adapter,
+      SPW_BASELINE_ADAPTER_STATE: sandbox.adapterState,
+      SPW_BASELINE_ADAPTER_LOG: sandbox.adapterLog,
+      SPW_BASELINE_VALIDATOR_MARKER: validatorMarker,
+      SUPERPOWERS_CACHE_DIR: customCache,
+      SUPERPOWERS_PLUGIN_ROOT: customPlugin,
+      SUPERPOWERS_MANIFEST_TEMPLATE: customTemplate,
+      SUPERPOWERS_VALIDATOR: customValidator,
+      SUPERPOWERS_REF: 'v1.1.0',
+      SUPERPOWERS_UPSTREAM_URL: upstream.REPO,
+    });
+    assertCleanResult(result);
+    assert.equal(
+      existsSync(join(customCache, 'superpowers', '.git')),
+      true,
+    );
+    assert.equal(
+      existsSync(join(customPlugin, '.codex-plugin', 'plugin.json')),
+      true,
+    );
+    assert.equal(readFileSync(validatorMarker, 'utf8'), 'ran\n');
+  });
+});
+
+test('SEL-REF-GENERIC-01 public prepare resolves arbitrary environment refs', () => {
+  withSandbox({}, (sandbox) => {
+    const upstream = createReleaseRepo(sandbox);
+    const result = runCli(sandbox, ['prepare'], {
+      SPW_ADAPTER: sandbox.adapter,
+      SPW_BASELINE_ADAPTER_STATE: sandbox.adapterState,
+      SPW_BASELINE_ADAPTER_LOG: sandbox.adapterLog,
+      SUPERPOWERS_REF: 'main',
+      SUPERPOWERS_UPSTREAM_URL: upstream.REPO,
+    });
+    assertCleanResult(result);
+    const provenance = generatedProvenance(sandbox);
+    assert.equal(provenance.requested_ref, 'main');
+    assert.equal(provenance.resolved_ref, 'main');
+    assert.match(provenance.commit, /^[0-9a-f]{40}$/);
   });
 });
 
@@ -764,6 +973,11 @@ test('SEL-BYTES-PINNED-01 pin writes canonical selection bytes', () => {
       SUPERPOWERS_UPSTREAM_URL: upstream.REPO,
     });
     assertCleanResult(result);
+    assert.equal(
+      result.stdout,
+      `pinned upstream selection to v1.1.0 at ${upstream.STABLE_COMMIT}\n`,
+    );
+    assert.equal(result.stderr, '');
     assert.deepEqual(
       readFileSync(selectionPath(sandbox)),
       substitutedFixtureBytes(
@@ -893,6 +1107,17 @@ test('PREPARE-TREE-01 prepare creates the canonical generated tree', () => {
     assert.equal(manifest.name, 'superpowers');
     assert.equal(manifest.skills, './skills/');
     assert.match(manifest.version, /^0\.0\.0\+manager\.[0-9a-f]{7}$/);
+
+    const firstTree = snapshotTree(sandbox.plugin);
+    const repeated = runCli(sandbox, ['prepare'], {
+      SPW_ADAPTER: sandbox.adapter,
+      SPW_BASELINE_ADAPTER_STATE: sandbox.adapterState,
+      SPW_BASELINE_ADAPTER_LOG: sandbox.adapterLog,
+      SUPERPOWERS_REF: commit,
+      SUPERPOWERS_UPSTREAM_URL: upstream.REPO,
+    });
+    assertCleanResult(repeated);
+    assert.deepEqual(snapshotTree(sandbox.plugin), firstTree);
   });
 });
 
@@ -1178,6 +1403,8 @@ test('UPDATE-CONTROL-01 update requires current managed control evidence', () =>
 test('UNINSTALL-OWNERSHIP-01 uninstall removes only manager-owned resources', () => {
   for (const managerPresent of [true, false]) {
     withSandbox({}, (sandbox) => {
+      const generatedBefore = snapshotTree(sandbox.plugin);
+      const cacheBefore = snapshotTree(sandbox.cache);
       writeAdapterState(sandbox, {
         plugin: managerPresent,
         marketplace: managerPresent,
@@ -1220,6 +1447,8 @@ test('UNINSTALL-OWNERSHIP-01 uninstall removes only manager-owned resources', ()
           fingerprint: null,
         },
       );
+      assert.deepEqual(snapshotTree(sandbox.plugin), generatedBefore);
+      assert.deepEqual(snapshotTree(sandbox.cache), cacheBefore);
     });
   }
 });

@@ -139,6 +139,10 @@ assert_version_exit_2 \
   '{"installed":[{"pluginId":"superpowers@superpowers-manager","version":"1.0.0"},{"pluginId":"superpowers@superpowers-manager","version":"2.0.0"}]}'
 assert_version_exit_2 \
   '{"installed":[{"pluginId":"superpowers@superpowers-manager","version":"bad/name"}]}'
+absent_version=$(spw_active_plugin_version_from_json \
+  '{"installed":[{"pluginId":"unrelated@elsewhere","version":"1.0.0"}]}' \
+  superpowers@superpowers-manager)
+[ -z "$absent_version" ]
 
 # --- spw_paths_equal: symlinked roots are the same physical location.
 # This is the portable equivalent of macOS /var vs /private/var. ---
@@ -203,6 +207,14 @@ chmod +x "$fake_codex"
 export FAKE_CODEX_LOG="$fake_log"
 SUPERPOWERS_CODEX="$fake_codex"
 export SUPERPOWERS_CODEX
+
+# BASELINE CASE: UNINSTALL-TARGETS-01 adapter removes only manager resources
+: > "$fake_log"
+SPW_ADAPTER="$root/scripts/adapters/codex/adapter" \
+SUPERPOWERS_CODEX="$fake_codex" \
+  spw_adapter_uninstall "$tmpdir/uninstall-result.json" true true >/dev/null
+test "$(cat "$fake_log")" = "plugin remove superpowers@superpowers-manager
+plugin marketplace remove superpowers-manager"
 
 assert_exact_commands() {
   expected="$1"
@@ -382,6 +394,34 @@ if (spw_verify_uninstalled_resources "$invalid_ownership") >"$tmpdir/invalid-own
   exit 1
 fi
 
+# BASELINE CASE: UNINSTALL-VERIFY-01 both manager resources must be absent
+for remaining in plugin marketplace; do
+  case "$remaining" in
+    plugin)
+      resources='{"plugin":true,"marketplace":false}'
+      residual_message='owned plugin resource is still installed after removal'
+      ;;
+    marketplace)
+      resources='{"plugin":false,"marketplace":true}'
+      residual_message='owned marketplace resource is still registered after removal'
+      ;;
+  esac
+  printf '%s\n' \
+    "{\"view\":\"ownership\",\"resources\":$resources,\"legacy_resources\":{\"plugin\":false,\"marketplace\":false},\"identity_state\":\"manager\"}" \
+    > "$tmpdir/remaining-$remaining.json"
+  if (spw_verify_uninstalled_resources "$tmpdir/remaining-$remaining.json") \
+      >"$tmpdir/remaining-$remaining.out" 2>&1; then
+    echo "remaining $remaining resource must fail uninstall verification" >&2
+    exit 1
+  fi
+  grep -Fq "$residual_message" "$tmpdir/remaining-$remaining.out"
+done
+printf '%s\n' \
+  '{"view":"ownership","resources":{"plugin":false,"marketplace":false},"legacy_resources":{"plugin":true,"marketplace":true},"identity_state":"legacy"}' \
+  > "$tmpdir/uninstalled.json"
+spw_verify_uninstalled_resources "$tmpdir/uninstalled.json"
+
+# BASELINE CASE: INSTALL-VERIFY-01 installed fingerprint proof and hints
 # --- spw_verify_installed_fingerprint: compares the installed fingerprint to
 # the desired commit and replays only optional adapter-provided hints.
 desired="abcdef0123456789abcdef0123456789abcdef01"
@@ -402,6 +442,14 @@ EOF
 out=$(spw_verify_installed_fingerprint "$desired" "$install_result" "$inspect_result")
 printf '%s\n' "$out" | grep -Fq "manager updated"
 printf '%s\n' "$out" | grep -Fq "installed_commit=$desired"
+
+printf '%s\n' "{\"commit\":\"$(printf '%s' "$desired" | cut -c 1-7)\"}" \
+  > "$installed_root/.superpowers-upstream.json"
+out=$(spw_verify_installed_fingerprint "$desired" "$install_result" "$inspect_result")
+printf '%s\n' "$out" | grep -Fq "manager updated"
+printf '%s\n' "$out" | grep -Fq "installed_commit=$(printf '%s' "$desired" | cut -c 1-7)"
+printf '%s\n' "{\"commit\":\"$desired\"}" \
+  > "$installed_root/.superpowers-upstream.json"
 
 if (spw_verify_installed_fingerprint "1111111111111111111111111111111111111111" "$install_result" "$inspect_result") >"$tmpdir/stale.out" 2>&1; then
   echo "stale installed metadata must fail" >&2; exit 1

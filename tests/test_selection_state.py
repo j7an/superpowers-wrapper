@@ -200,11 +200,20 @@ class SelectionStateTests(unittest.TestCase):
         )
 
     def test_read_rejects_empty_multiline_and_invalid_ref_strings(self) -> None:
+        prerelease = {
+            **PINNED,
+            "requested_ref": "v1.2.3-rc.1",
+            "resolved_ref": "v1.2.3-rc.1",
+        }
+        accepted = self.read_raw(json.dumps(prerelease))
+        self.assertEqual(accepted.returncode, 0, accepted.stdout + accepted.stderr)
         invalid_records = (
             {**TRACK_LATEST, "source": ""},
             {**TRACK_LATEST, "source": "local\npath"},
+            {**TRACK_LATEST, "source": "local\0path"},
             {**PINNED, "requested_ref": ""},
             {**PINNED, "requested_ref": "v6.1.1\n", "resolved_ref": "v6.1.1\n"},
+            {**PINNED, "requested_ref": "v6.1.1\0", "resolved_ref": "v6.1.1\0"},
             {**PINNED, "requested_ref": "6.1.1", "resolved_ref": "6.1.1"},
             {**PINNED, "requested_ref": "v01.2.3", "resolved_ref": "v01.2.3"},
             {**PINNED, "requested_ref": "v1.02.3", "resolved_ref": "v1.02.3"},
@@ -228,6 +237,19 @@ class SelectionStateTests(unittest.TestCase):
         for field in ("requested_ref", "resolved_ref", "commit"):
             invalid = {**raw, field: OTHER_COMMIT}
             with self.subTest(field=field):
+                self.assert_read_fails(json.dumps(invalid))
+        for invalid_commit in (
+            COMMIT[:-1],
+            COMMIT.upper(),
+            "g" + COMMIT[1:],
+        ):
+            invalid = {
+                **raw,
+                "requested_ref": invalid_commit,
+                "resolved_ref": invalid_commit,
+                "commit": invalid_commit,
+            }
+            with self.subTest(invalid_commit=invalid_commit):
                 self.assert_read_fails(json.dumps(invalid))
 
     def test_source_validation_rejects_http_userinfo_only(self) -> None:
@@ -355,11 +377,24 @@ class SelectionStateTests(unittest.TestCase):
     def test_failed_replace_cleans_only_own_temporary_file(self) -> None:
         module = self.load_module()
         self.state_path.parent.mkdir(mode=0o700)
+        prior_bytes = json.dumps(PINNED, indent=2, allow_nan=False) + "\n"
+        self.state_path.write_text(prior_bytes, encoding="utf-8")
+        os.chmod(self.state_path, 0o600)
         foreign = self.state_path.parent / ".selection.json.tmp.foreign"
         foreign.write_text("keep", encoding="utf-8")
-        with mock.patch.object(module.os, "replace", side_effect=OSError("replace failed")):
+        observed_temporary_modes: list[int] = []
+
+        def reject_replace(source: Path, destination: Path) -> None:
+            self.assertEqual(destination, self.state_path)
+            self.assertTrue(source.name.startswith(".selection.json.tmp."))
+            observed_temporary_modes.append(stat.S_IMODE(source.stat().st_mode))
+            raise OSError("replace failed")
+
+        with mock.patch.object(module.os, "replace", side_effect=reject_replace):
             with self.assertRaises(module.SelectionError):
-                module.write_record(self.state_path, PINNED)
+                module.write_record(self.state_path, TRACK_LATEST)
+        self.assertEqual(observed_temporary_modes, [0o600])
+        self.assertEqual(self.state_path.read_text(encoding="utf-8"), prior_bytes)
         self.assertEqual(foreign.read_text(encoding="utf-8"), "keep")
         self.assertEqual(
             [path for path in self.state_path.parent.glob(".selection.json.tmp.*") if path != foreign],

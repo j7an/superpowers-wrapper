@@ -25,6 +25,20 @@ function markdownCells(line) {
   return line.trim().slice(1, -1).split('|').map((cell) => cell.trim());
 }
 
+function assertMarkdownDelimiter(lines, headerIndex, expectedColumns, label) {
+  const delimiter = lines[headerIndex + 1] || '';
+  assert.match(delimiter, /^\|.*\|$/, `${label} delimiter row is missing`);
+  const cells = markdownCells(delimiter);
+  assert.equal(
+    cells.length,
+    expectedColumns,
+    `${label} delimiter must have ${expectedColumns} fields: ${delimiter}`,
+  );
+  for (const cell of cells) {
+    assert.match(cell, /^:?-{3,}:?$/, `${label} has an invalid delimiter cell: ${cell}`);
+  }
+}
+
 function uncode(cell) {
   const match = /^`([^`]*)`$/.exec(cell);
   return match ? match[1] : cell;
@@ -35,6 +49,8 @@ function inventoryIds() {
   const ids = [];
   for (let index = 0; index < lines.length; index += 1) {
     if (!/^\|\s*Behavior ID\s*\|/.test(lines[index])) continue;
+    const headerCells = markdownCells(lines[index]);
+    assertMarkdownDelimiter(lines, index, headerCells.length, 'inventory table');
     index += 2;
     while (/^\|.*\|$/.test(lines[index] || '')) {
       const id = uncode(markdownCells(lines[index])[0]);
@@ -53,6 +69,7 @@ function traceabilityRows() {
     (line) => /^\|\s*Behavior ID\s*\|\s*Behavior\s*\|\s*Exact test case\s*\|\s*Fixture \/ builder\s*\|$/.test(line),
   );
   assert.notEqual(headerIndex, -1, 'traceability table header is missing');
+  assertMarkdownDelimiter(lines, headerIndex, 4, 'traceability table');
   const rows = [];
   for (let index = headerIndex + 2; /^\|.*\|$/.test(lines[index] || ''); index += 1) {
     const fields = markdownCells(lines[index]);
@@ -110,8 +127,14 @@ test('TRACEABILITY-IDS-01 every assigned behavior ID has exactly one row', () =>
 
 test('TRACEABILITY-TESTS-01 every row names an exact running test case', () => {
   for (const { id, testCase } of traceabilityRows()) {
+    assert.equal(
+      testCase.match(/::/g)?.length,
+      1,
+      `${id} test case must contain exactly one PATH::SELECTOR separator`,
+    );
     const separator = testCase.indexOf('::');
     assert.ok(separator > 0, `${id} test case must use PATH::SELECTOR`);
+    assert.ok(separator < testCase.length - 2, `${id} test selector is empty`);
     const path = testCase.slice(0, separator);
     const selector = testCase.slice(separator + 2);
     assert.ok(selector, `${id} test selector is empty`);
