@@ -1096,7 +1096,9 @@ run_prepare_for_ref "reader-depth-256" "out-reader-depth-256"
 reader_depth_256_commit=$(git -C "$upstream" rev-parse reader-depth-256)
 reader_depth_256_short=$(printf '%s' "$reader_depth_256_commit" | cut -c 1-7)
 assert_prepare_version \
-  "out-reader-depth-256" "6.1.1+manager.$reader_depth_256_short"
+  "out-reader-depth-256" \
+  "0.0.0-ref-reader-depth-256+manager.$reader_depth_256_short"
+assert_prepare_upstream_manifest_version "out-reader-depth-256" "6.1.1"
 assert_rejected_manifest_input \
   "reader-duplicate" "out-reader-duplicate" \
   'field `name` must equal `superpowers`'
