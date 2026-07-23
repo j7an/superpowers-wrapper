@@ -178,6 +178,7 @@ class SelectionStateTests(unittest.TestCase):
         ):
             with self.subTest(raw=raw):
                 self.assert_read_fails(raw)
+
     def test_read_enforces_exact_nesting_boundary(self) -> None:
         at_limit = "[" * 256 + "0" + "]" * 256
         self.assert_read_fails(at_limit, "selection state must be a JSON object")
