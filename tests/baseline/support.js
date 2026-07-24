@@ -344,7 +344,9 @@ function writeNoopTool(sandbox, name = 'codex') {
 
 function createSandbox({ stubScripts = false } = {}) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'spw-baseline-')));
-  const sandbox = {
+  let sandbox;
+  try {
+    sandbox = {
     root,
     pkg: join(root, 'pkg'),
     bin: join(root, 'bin'),
@@ -369,29 +371,36 @@ function createSandbox({ stubScripts = false } = {}) {
     adapterState: join(root, 'adapter-state'),
     adapterLog: join(root, 'adapter.log'),
     dispatchLog: join(root, 'dispatch.log'),
-  };
+    };
 
-  for (const directory of [
-    sandbox.bin,
-    sandbox.home,
-    sandbox.tmp,
-    sandbox.config,
-    sandbox.cache,
-    sandbox.codex,
-    sandbox.git,
-    sandbox.work,
-    sandbox.adapterState,
-  ]) {
-    mkdirSync(directory, { recursive: true });
-  }
-  copyRuntimePackage(sandbox.pkg);
-  copyFileSync(ADAPTER, sandbox.adapter);
-  chmodSync(sandbox.adapter, 0o755);
-  for (const tool of SANDBOX_TOOLS) {
-    linkHostTool(sandbox.bin, tool);
-  }
-  for (const tool of ['node', 'python3', 'git']) {
-    assertSandboxHostTool(sandbox.bin, tool);
+    for (const directory of [
+      sandbox.bin,
+      sandbox.home,
+      sandbox.tmp,
+      sandbox.config,
+      sandbox.cache,
+      sandbox.codex,
+      sandbox.git,
+      sandbox.work,
+      sandbox.adapterState,
+    ]) {
+      mkdirSync(directory, { recursive: true });
+    }
+    copyRuntimePackage(sandbox.pkg);
+    copyFileSync(ADAPTER, sandbox.adapter);
+    chmodSync(sandbox.adapter, 0o755);
+    for (const tool of SANDBOX_TOOLS) {
+      linkHostTool(sandbox.bin, tool);
+    }
+    for (const tool of ['node', 'python3', 'git']) {
+      assertSandboxHostTool(sandbox.bin, tool);
+    }
+  } catch (error) {
+    try {
+      rmSync(root, { recursive: true, force: true });
+    } finally {
+      throw error;
+    }
   }
   REGISTERED_SANDBOXES.set(sandbox, root);
   if (stubScripts) installDispatchStubs(sandbox);
