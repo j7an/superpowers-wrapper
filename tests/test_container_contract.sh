@@ -21,9 +21,44 @@ test -f "$root/.dockerignore"
 grep -Fxq 'FROM node:24-bookworm-slim' "$dockerfile"
 grep -Fxq 'RUN useradd --create-home --uid 10001 spw' "$dockerfile"
 grep -Fxq 'USER spw' "$dockerfile"
-grep -Fq '"@openai/codex": "0.144.6"' "$tools"
-grep -Fq '"typescript": "7.0.2"' "$tools"
-grep -Fq '"@types/node": "24.13.3"' "$tools"
+grep -Fq './node_modules/.bin/codex --version >/dev/null' "$dockerfile"
+grep -Fq 'corepack enable' "$dockerfile"
+grep -Fq 'pnpm install --frozen-lockfile' "$dockerfile"
+grep -Fq 'pnpm run build' "$dockerfile"
+
+lockfile="$root/tests/container/package-lock.json"
+
+node --input-type=module - "$tools" "$lockfile" <<'NODE'
+import { readFileSync } from 'node:fs';
+
+const packagePath = process.argv[2];
+const lockPath = process.argv[3];
+const packageData = JSON.parse(readFileSync(packagePath, 'utf8'));
+const lockData = JSON.parse(readFileSync(lockPath, 'utf8'));
+
+const dependencies = packageData.dependencies;
+if (!dependencies || typeof dependencies !== 'object') {
+  throw new Error('container tool package must declare dependencies');
+}
+if (Object.keys(dependencies).join('\n') !== '@openai/codex') {
+  throw new Error('container tool package must contain only @openai/codex');
+}
+
+const declared = dependencies['@openai/codex'];
+const exactSemver =
+  /^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?$/;
+if (typeof declared !== 'string' || !exactSemver.test(declared)) {
+  throw new Error('@openai/codex must use an exact semantic-version pin');
+}
+
+const lockedRoot =
+  lockData.packages?.['']?.dependencies?.['@openai/codex'];
+const lockedPackage =
+  lockData.packages?.['node_modules/@openai/codex']?.version;
+if (lockedRoot !== declared || lockedPackage !== declared) {
+  throw new Error('@openai/codex package and lockfile versions must agree');
+}
+NODE
 grep -Fq '"module": "NodeNext"' "$tsconfig"
 grep -Fq '"moduleResolution": "NodeNext"' "$tsconfig"
 if grep -Fq '"Node16"' "$tsconfig"; then

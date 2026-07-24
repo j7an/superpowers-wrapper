@@ -8,12 +8,15 @@ RUN apt-get update \
 WORKDIR /opt/spw-test-tools
 COPY tests/container/package.json tests/container/package-lock.json ./
 RUN npm ci --ignore-scripts \
-    && test "$(./node_modules/.bin/codex --version | awk '{print $NF}')" = "0.144.6"
+    && ./node_modules/.bin/codex --version >/dev/null
 
 RUN useradd --create-home --uid 10001 spw
 WORKDIR /workspace
 COPY . .
-RUN chown -R root:root /workspace /opt/spw-test-tools \
+RUN corepack enable \
+    && pnpm install --frozen-lockfile \
+    && pnpm run build \
+    && chown -R root:root /workspace /opt/spw-test-tools \
     && chmod +x tests/container.sh tests/container/codex-offline-probe.sh
 
 ENV HOME=/home/spw
