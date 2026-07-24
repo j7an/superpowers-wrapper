@@ -42,12 +42,23 @@ def unique_step_target_index(steps, target)
   matches.fetch(0)
 end
 
+def unique_run_step_index(steps, command)
+  matches = steps.each_index.select do |index|
+    step = steps.fetch(index)
+    step.is_a?(Hash) && step["run"] == command
+  end
+  unless matches.length == 1
+    raise "expected exactly one run step #{command.inspect}, found #{matches.length}"
+  end
+  matches.fetch(0)
+end
+
 def check_ci(workflow)
   workflow = expect_hash(workflow, "workflow")
   expect_equal(fetch(workflow, "permissions", "permissions"), {}, "permissions")
 
   jobs = expect_hash(fetch(workflow, "jobs", "jobs"), "jobs")
-  expect_equal(jobs.keys, ["test"], "jobs keys")
+  expect_equal(jobs.keys, ["test", "toolchain"], "jobs keys")
 
   test_job = expect_hash(fetch(jobs, "test", "jobs.test"), "jobs.test")
   raise "jobs.test must not use continue-on-error" if test_job.key?("continue-on-error")
@@ -116,6 +127,71 @@ def check_ci(workflow)
 
   acceptance = expect_hash(steps.fetch(acceptance_index), "container acceptance step")
   raise "container acceptance step must not use continue-on-error" if acceptance.key?("continue-on-error")
+
+  toolchain = expect_hash(fetch(jobs, "toolchain", "jobs.toolchain"), "jobs.toolchain")
+  raise "jobs.toolchain must not use continue-on-error" if toolchain.key?("continue-on-error")
+  expect_equal(
+    fetch(toolchain, "runs-on", "jobs.toolchain.runs-on"),
+    "ubuntu-latest",
+    "jobs.toolchain.runs-on",
+  )
+  expect_equal(
+    fetch(
+      expect_hash(
+        fetch(toolchain, "permissions", "jobs.toolchain.permissions"),
+        "jobs.toolchain.permissions",
+      ),
+      "contents",
+      "jobs.toolchain.permissions.contents",
+    ),
+    "read",
+    "jobs.toolchain.permissions.contents",
+  )
+
+  toolchain_steps = fetch(toolchain, "steps", "jobs.toolchain.steps")
+  raise "expected jobs.toolchain.steps to be an array" unless toolchain_steps.is_a?(Array)
+
+  toolchain_harden = unique_step_target_index(
+    toolchain_steps,
+    "step-security/harden-runner",
+  )
+  toolchain_checkout = unique_step_target_index(toolchain_steps, "actions/checkout")
+  setup_node = unique_step_target_index(toolchain_steps, "actions/setup-node")
+  corepack = unique_run_step_index(toolchain_steps, "corepack enable")
+  install = unique_run_step_index(
+    toolchain_steps,
+    "pnpm install --frozen-lockfile",
+  )
+  check = unique_run_step_index(toolchain_steps, "pnpm run check")
+
+  unless [
+    toolchain_harden,
+    toolchain_checkout,
+    setup_node,
+    corepack,
+    install,
+    check,
+  ] == [
+    toolchain_harden,
+    toolchain_checkout,
+    setup_node,
+    corepack,
+    install,
+    check,
+  ].sort
+    raise "toolchain steps are out of order"
+  end
+
+  setup = expect_hash(toolchain_steps.fetch(setup_node), "setup-node step")
+  expect_equal(
+    fetch(
+      expect_hash(fetch(setup, "with", "setup-node step.with"), "setup-node step.with"),
+      "node-version",
+      "setup-node step.with.node-version",
+    ),
+    "24",
+    "setup-node step.with.node-version",
+  )
 end
 
 def assert_no_forbidden(value, path = "workflow")
@@ -176,7 +252,7 @@ def check_inventory(root, manifest_path, workflow_paths)
     end
   end
   expected = load_expected_external_pins(manifest_path)
-  expect_equal(actual.sort, expected.sort, "external uses inventory")
+  expect_equal(actual.uniq.sort, expected.sort, "external uses inventory")
 end
 
 def check_release(workflow)
@@ -228,7 +304,8 @@ def check_release(workflow)
   expected_with = {
     "tag" => "${{ github.ref_name }}",
     "package-name" => "superpowers-manager",
-    "test-command" => "sh tests/container.sh",
+    "test-command" =>
+      "corepack enable && pnpm install --frozen-lockfile && pnpm run build && sh tests/container.sh",
     "pack-contents-script" => "tests/assert_pack_contents.sh",
     "verify-command" => expected_verify_command,
   }
@@ -290,6 +367,16 @@ test_action_pin_helper() {
   block=$(printf '        uses: "%s@%s" # v4.99.0' "$target" "$sha_one")
   assert_action_pin "$block" "$target"
 
+  block=$(printf '%s\n%s\n' \
+    "        uses: $target@$sha_one # v4.99.0" \
+    "        uses: $target@$sha_one # v4.99.0")
+  actual_pair=$(action_pin_pair "$block" "$target")
+  if [ "$actual_pair" != "$expected_pair" ]; then
+    printf 'agreeing action pin pair mismatch: got %s, expected %s\n' \
+      "$actual_pair" "$expected_pair" >&2
+    return 1
+  fi
+
   assert_rejected_action_pin \
     "        uses: $target@v4.99.0 # v4.99.0" "$target"
   assert_rejected_action_pin \
@@ -335,6 +422,7 @@ write_expected_external_pins() {
   cat >"$1" <<'PINS'
 .github/workflows/ci.yml	step-security/harden-runner
 .github/workflows/ci.yml	actions/checkout
+.github/workflows/ci.yml	actions/setup-node
 .github/workflows/dependency-safety.yml	j7an/shared-workflows/.github/workflows/dependency-safety.yml
 .github/workflows/dependency-safety-non-bot-gate.yml	j7an/shared-workflows/.github/workflows/dependency-safety-non-bot-gate.yml
 .github/workflows/release.yml	j7an/shared-workflows/.github/workflows/publish-npm.yml
@@ -382,8 +470,8 @@ test_workflow_pin_contracts() {
     esac
   done <"$manifest"
 
-  if [ "$pin_count" -ne 7 ]; then
-    printf 'workflow pin inventory count mismatch: got %d, expected 7\n' \
+  if [ "$pin_count" -ne 8 ]; then
+    printf 'workflow pin inventory count mismatch: got %d, expected 8\n' \
       "$pin_count" >&2
     return 1
   fi
