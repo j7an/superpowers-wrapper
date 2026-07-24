@@ -6,6 +6,7 @@ node_modules
 plugins/.superpowers.prepare.*/
 plugins/.superpowers.bak.*/
 *.tgz
+dist/
 docs/superpowers
 plugins/superpowers/**
 !plugins/superpowers/.codex-plugin/plugin.template.json

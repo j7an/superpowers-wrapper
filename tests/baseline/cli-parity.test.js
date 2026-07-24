@@ -428,7 +428,7 @@ test('CLI-HOST-TOOLS-02 removes an unregistered root after a smoke-check failure
   }
 });
 
-test('CLI-MODE-VERSION-01 version mode', () => {
+test('CLI-MODE-VERSION-01 version mode routes through dist', () => {
   withSandbox({ stubScripts: true }, (sandbox) => {
     const { version } = JSON.parse(
       readFileSync(join(sandbox.pkg, 'package.json'), 'utf8'),

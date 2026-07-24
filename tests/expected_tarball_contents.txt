@@ -6,6 +6,7 @@ LICENSE
 README.md
 bin/superpowers-manager.js
 config/upstream-ref
+dist/cli.js
 package.json
 plugins/superpowers/.codex-plugin/plugin.template.json
 scripts/adapters/codex/adapter

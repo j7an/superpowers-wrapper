@@ -89,57 +89,60 @@ function packagedManifest(tarball, environment) {
   return JSON.parse(extracted.stdout);
 }
 
-test('PACKAGE-CLI-01 offline installed tarball exposes help and version', () => {
-  const root = mkdtempSync(join(tmpdir(), 'spw-packaged-cli-'));
-  try {
-    const pack = join(root, 'pack');
-    const consumer = join(root, 'consumer');
-    const environment = isolatedEnvironment(root);
-    mkdirSync(pack);
-    mkdirSync(consumer);
+test(
+  'PACKAGE-CLI-01 offline installed tarball routes through dist and exposes help and version',
+  () => {
+    const root = mkdtempSync(join(tmpdir(), 'spw-packaged-cli-'));
+    try {
+      const pack = join(root, 'pack');
+      const consumer = join(root, 'consumer');
+      const environment = isolatedEnvironment(root);
+      mkdirSync(pack);
+      mkdirSync(consumer);
 
-    const packed = run('npm', ['pack', '--json', '--pack-destination', pack], {
-      cwd: ROOT,
-      env: environment,
-    });
-    assertSucceeded(packed, 'npm pack');
-    const report = normalizePackReport(JSON.parse(packed.stdout));
-    assert.equal(report.length, 1, 'npm pack must produce one artifact');
-    assert.equal(typeof report[0].filename, 'string', 'npm pack report must include filename');
-    const tarball = isAbsolute(report[0].filename)
-      ? report[0].filename
-      : resolve(pack, report[0].filename);
-    assert.equal(relative(pack, tarball).startsWith('..'), false, 'tarball must be below pack root');
-    const manifest = packagedManifest(tarball, environment);
-    assert.equal(typeof manifest.version, 'string', 'packed package.json must include version');
+      const packed = run('npm', ['pack', '--json', '--pack-destination', pack], {
+        cwd: ROOT,
+        env: environment,
+      });
+      assertSucceeded(packed, 'npm pack');
+      const report = normalizePackReport(JSON.parse(packed.stdout));
+      assert.equal(report.length, 1, 'npm pack must produce one artifact');
+      assert.equal(typeof report[0].filename, 'string', 'npm pack report must include filename');
+      const tarball = isAbsolute(report[0].filename)
+        ? report[0].filename
+        : resolve(pack, report[0].filename);
+      assert.equal(relative(pack, tarball).startsWith('..'), false, 'tarball must be below pack root');
+      const manifest = packagedManifest(tarball, environment);
+      assert.equal(typeof manifest.version, 'string', 'packed package.json must include version');
 
-    writeFileSync(join(consumer, 'package.json'), '{ "private": true }\n');
-    const installed = run('npm', [
-      'install',
-      '--offline',
-      '--ignore-scripts',
-      '--no-audit',
-      '--no-fund',
-      '--cache',
-      join(root, 'npm-cache'),
-      tarball,
-    ], {
-      cwd: consumer,
-      env: environment,
-    });
-    assertSucceeded(installed, 'offline npm install');
+      writeFileSync(join(consumer, 'package.json'), '{ "private": true }\n');
+      const installed = run('npm', [
+        'install',
+        '--offline',
+        '--ignore-scripts',
+        '--no-audit',
+        '--no-fund',
+        '--cache',
+        join(root, 'npm-cache'),
+        tarball,
+      ], {
+        cwd: consumer,
+        env: environment,
+      });
+      assertSucceeded(installed, 'offline npm install');
 
-    const executable = join(consumer, 'node_modules', '.bin', 'superpowers-manager');
-    const help = run(executable, ['--help'], { cwd: consumer, env: environment });
-    assertSucceeded(help, 'installed CLI --help');
-    assert.match(help.stdout, /usage:/i);
-    assert.equal(help.stderr, '');
+      const executable = join(consumer, 'node_modules', '.bin', 'superpowers-manager');
+      const help = run(executable, ['--help'], { cwd: consumer, env: environment });
+      assertSucceeded(help, 'installed CLI --help');
+      assert.match(help.stdout, /usage:/i);
+      assert.equal(help.stderr, '');
 
-    const version = run(executable, ['--version'], { cwd: consumer, env: environment });
-    assertSucceeded(version, 'installed CLI --version');
-    assert.equal(version.stdout.trim(), manifest.version);
-    assert.equal(version.stderr, '');
-  } finally {
-    rmSync(root, { force: true, recursive: true });
-  }
-});
+      const version = run(executable, ['--version'], { cwd: consumer, env: environment });
+      assertSucceeded(version, 'installed CLI --version');
+      assert.equal(version.stdout.trim(), manifest.version);
+      assert.equal(version.stderr, '');
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  },
+);
