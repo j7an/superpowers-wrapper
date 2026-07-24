@@ -89,8 +89,7 @@ function packagedManifest(tarball, environment) {
   return JSON.parse(extracted.stdout);
 }
 
-test(
-  'PACKAGE-CLI-01 offline installed tarball routes through dist and exposes help and version',
+test('PACKAGE-CLI-01 offline installed tarball routes through dist and exposes help and version',
   () => {
     const root = mkdtempSync(join(tmpdir(), 'spw-packaged-cli-'));
     try {
