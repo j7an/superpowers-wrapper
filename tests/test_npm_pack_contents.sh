@@ -72,4 +72,20 @@ assert_rejected_identity name tampered-package "pack report name mismatch"
 assert_rejected_identity version 0.0.0-tampered "pack report version mismatch"
 assert_rejected_identity id tampered-package@0.0.0 "pack report id mismatch"
 
+distless="$tmpdir/distless"
+mkdir -p "$distless"
+cp "$root/package.json" "$distless/package.json"
+
+rc=0
+(
+  cd "$distless"
+  npm pack --dry-run --json
+) >"$tmpdir/distless-out" 2>"$tmpdir/distless-err" || rc=$?
+
+[ "$rc" -ne 0 ] || {
+  echo "distless npm pack must fail" >&2
+  exit 1
+}
+grep -Fq 'dist/cli.js is missing' "$tmpdir/distless-err"
+
 echo "test_npm_pack_contents: OK"

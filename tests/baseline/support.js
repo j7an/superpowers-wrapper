@@ -260,6 +260,7 @@ function validateEnvironment(sandbox, environment, cwd) {
 function copyRuntimePackage(pkg) {
   mkdirSync(pkg, { recursive: true });
   cpSync(join(ROOT, 'bin'), join(pkg, 'bin'), { recursive: true });
+  cpSync(join(ROOT, 'dist'), join(pkg, 'dist'), { recursive: true });
   cpSync(join(ROOT, 'scripts'), join(pkg, 'scripts'), { recursive: true });
   cpSync(join(ROOT, 'config'), join(pkg, 'config'), { recursive: true });
   copyFileSync(join(ROOT, 'package.json'), join(pkg, 'package.json'));

@@ -12,7 +12,7 @@ selectors or intentionally update the inventory, test, and this map together.
 | Behavior ID | Exact test case | Fixture / builder |
 |---|---|---|
 | `CLI-MODE-HELP-01` | `tests/baseline/cli-parity.test.js::CLI-MODE-HELP-01 help modes` | — |
-| `CLI-MODE-VERSION-01` | `tests/baseline/cli-parity.test.js::CLI-MODE-VERSION-01 version mode` | — |
+| `CLI-MODE-VERSION-01` | `tests/baseline/cli-parity.test.js::CLI-MODE-VERSION-01 version mode routes through dist` | — |
 | `CLI-MODE-DEFAULT-01` | `tests/baseline/cli-parity.test.js::CLI-MODE-DEFAULT-01 no arguments dispatch update` | — |
 | `CLI-COMMANDS-01` | `tests/baseline/cli-parity.test.js::CLI-COMMANDS-01 eight named commands dispatch` | — |
 | `CLI-USAGE-01` | `tests/baseline/cli-parity.test.js::CLI-USAGE-01 invalid command and stray flag fail with exit 2` | — |
@@ -129,5 +129,5 @@ selectors or intentionally update the inventory, test, and this map together.
 | `DIAG-SELECTION-UNPIN-01` | `tests/baseline/cli-parity.test.js::SEL-UNPIN-01 unpin removes saved intent without applying changes` | — |
 | `DIAG-PROBE-01` | `tests/baseline/cli-parity.test.js::PROBE-READONLY-01 probe is read-only` | — |
 | `DIAG-ADAPTER-01` | `tests/test_adapter_protocol.py::test_messages_replay_by_channel_in_order` | — |
-| `PACKAGE-REPO-01` | `tests/baseline/cli-parity.test.js::CLI-MODE-VERSION-01 version mode` | — |
-| `PACKAGE-TARBALL-01` | `tests/baseline/packaged-cli.test.js::PACKAGE-CLI-01 offline installed tarball exposes help and version` | — |
+| `PACKAGE-REPO-01` | `tests/baseline/cli-parity.test.js::CLI-MODE-VERSION-01 version mode routes through dist` | — |
+| `PACKAGE-TARBALL-01` | `tests/baseline/packaged-cli.test.js::PACKAGE-CLI-01 offline installed tarball routes through dist and exposes help and version` | — |

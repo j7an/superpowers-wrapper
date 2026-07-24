@@ -38,14 +38,19 @@ action_pin_pair() (
 
       sha = substr(ref, length(target) + 2)
       if (length(sha) == 40 && sha ~ /^[0-9a-f]+$/ && comment ~ /^v[0-9]+\.[0-9]+\.[0-9]+$/) {
+        candidate_pair = sha "\t" comment
+        if (valid_count == 0) {
+          pair = candidate_pair
+        } else if (candidate_pair != pair) {
+          disagreeing_pair = 1
+        }
         valid_count++
-        pair = sha "\t" comment
       }
     }
     END {
-      if (reference_count != 1 || valid_count != 1) {
+      if (reference_count == 0 || valid_count != reference_count || disagreeing_pair) {
         printf \
-          "expected exactly one semantic action pin for %s; found %d references and %d valid pins\n", \
+          "expected agreeing semantic action pins for %s; found %d references and %d valid pins\n", \
           target, reference_count + 0, valid_count + 0 > "/dev/stderr"
         exit 1
       }

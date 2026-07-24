@@ -323,8 +323,8 @@ Observable filesystem and external-state effects:
 | `DIAG-SELECTION-UNPIN-01` | Canonical successful `unpin` text reports saved-state removal, the packaged fallback, and active ref/source override notes, each on its own line. |
 | `DIAG-PROBE-01` | A public read-only porcelain probe reports a 40-hex `desired_commit` line and the exact `status=needs prepare` value for the frozen scenario. |
 | `DIAG-ADAPTER-01` | Validated adapter messages, controlled errors, and hints retain their declared stream and array order. |
-| `PACKAGE-REPO-01` | The public bin resolves package root from the physical bin location and runs from a repository/copy checkout without relying on the caller’s current directory. |
-| `PACKAGE-TARBALL-01` | The same declared `superpowers-manager` bin works from an offline installed npm tarball and exposes package-local help/version without reaching the repository checkout or network. |
+| `PACKAGE-REPO-01` | The public bin resolves package root from the physical bin location, loads the package-local generated `dist/cli.js`, and runs from a repository/copy checkout without relying on the caller’s current directory. |
+| `PACKAGE-TARBALL-01` | The declared `superpowers-manager` bin loads the packaged `dist/cli.js` from an offline installed npm tarball and exposes package-local help/version without reaching the repository checkout or network. |
 
 Absolute temporary paths, upstream Git/Codex/library wording, and unasserted
 operational prose are not frozen. Where a selector matches only a fragment,

@@ -14,4 +14,5 @@ plugins/superpowers/CODE_OF_CONDUCT.md
 plugins/superpowers/.superpowers-upstream.json
 docs/superpowers/
 *.tgz
+dist/
 node_modules/

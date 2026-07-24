@@ -17,7 +17,7 @@ jobs:
     with:
       tag: ${{ github.ref_name }}
       package-name: superpowers-manager
-      test-command: sh tests/container.sh
+      test-command: corepack enable && pnpm install --frozen-lockfile && pnpm run build && sh tests/container.sh
       pack-contents-script: tests/assert_pack_contents.sh
       verify-command: |
         attempt=1
