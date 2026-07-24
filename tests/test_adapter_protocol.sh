@@ -15,6 +15,29 @@ SPW_ADAPTER="$root/tests/fixtures/fake-adapter"
 grep -Fxq 'from __future__ import annotations' "$SPW_ADAPTER_RESPONSE_VALIDATOR"
 python3 -S "$root/tests/test_adapter_protocol.py"
 
+# BASELINE CASE: ADAPTER-ENVELOPE-KEYS-01 missing envelope keys reject before replay
+missing_envelope_response="$tmpdir/missing-envelope.response.json"
+missing_envelope_result="$tmpdir/missing-envelope.result.json"
+printf '%s\n' \
+  '{"operation":"build","ok":true,"messages":[{"channel":"stdout","text":"must-not-replay"}],"result":{},"error":null}' \
+  > "$missing_envelope_response"
+missing_envelope_rc=0
+python3 -S "$SPW_ADAPTER_RESPONSE_VALIDATOR" \
+  --operation build \
+  --adapter-exit 0 \
+  --response "$missing_envelope_response" \
+  --result "$missing_envelope_result" \
+  >"$tmpdir/missing-envelope.out" 2>"$tmpdir/missing-envelope.err" || \
+  missing_envelope_rc=$?
+[ "$missing_envelope_rc" -eq 2 ]
+[ ! -s "$tmpdir/missing-envelope.out" ]
+[ ! -e "$missing_envelope_result" ]
+grep -Fq 'response keys must be' "$tmpdir/missing-envelope.err"
+if grep -Fq 'must-not-replay' "$tmpdir/missing-envelope.out"; then
+  echo "missing envelope key replayed an unvalidated message" >&2
+  exit 1
+fi
+
 system_python=/usr/bin/python3
 if [ -x "$system_python" ]; then
   system_python_version=$(
@@ -215,6 +238,9 @@ if [ "$1" = plugin ] && [ "$2" = marketplace ] && [ "$3" = add ]; then
   printf '%b' 'marketplace-err\\literal\ttag\rdone\n' >&2
   exit 0
 fi
+if [ "$1" = plugin ] && [ "$2" = remove ]; then
+  exit 0
+fi
 if [ "$1" = plugin ] && [ "$2" = add ]; then
   printf '%b' 'plugin-out\\literal\ttag\rdone\n'
   printf '\376non-utf-plugin\n'
@@ -246,6 +272,8 @@ run_real_install() {
     >"$RUN_STDOUT" 2>"$RUN_STDERR" || RUN_RC=$?
 }
 
+# BASELINE CASE: CLI-ENV-REFRESH-MODE-01 install refresh defaults and validation
+# BASELINE CASE: CLI-ENV-CODEX-MUTATION-01 install mutation uses Codex override
 run_real_install install-success
 [ "$RUN_RC" -eq 0 ]
 [ -f "$RUN_RESULT" ]
@@ -261,6 +289,39 @@ if grep -Fq 'error: invalid adapter response:' "$RUN_STDERR"; then
   echo "escaped Codex output must not poison a successful install envelope" >&2
   exit 1
 fi
+if grep -Fq 'plugin remove' "$real_state/log"; then
+  echo "default add-only refresh unexpectedly removed the plugin" >&2
+  exit 1
+fi
+
+rm -f "$real_state/log"
+RUN_RESULT="$tmpdir/remove-add-refresh.result.json"
+RUN_RC=0
+SPW_ADAPTER="$root/scripts/adapters/codex/adapter" \
+SUPERPOWERS_CODEX="$real_codex" \
+SUPERPOWERS_INSTALL_REFRESH_MODE=remove-add \
+SPW_REAL_CODEX_STATE="$real_state" \
+SPW_REAL_CODEX_SCENARIO=install-success \
+  spw_invoke_adapter install "$RUN_RESULT" "" -- --package-root "$real_pkg" \
+  >"$tmpdir/remove-add-refresh.out" 2>"$tmpdir/remove-add-refresh.err" || RUN_RC=$?
+[ "$RUN_RC" -eq 0 ]
+[ -f "$RUN_RESULT" ]
+grep -Fq 'plugin remove superpowers@superpowers-manager' "$real_state/log"
+grep -Fq 'plugin add ' "$real_state/log"
+
+RUN_RESULT="$tmpdir/invalid-refresh.result.json"
+RUN_RC=0
+( SPW_ADAPTER="$root/scripts/adapters/codex/adapter" \
+  SUPERPOWERS_CODEX="$real_codex" \
+  SUPERPOWERS_INSTALL_REFRESH_MODE=invalid \
+  SPW_REAL_CODEX_STATE="$real_state" \
+  SPW_REAL_CODEX_SCENARIO=install-success \
+  spw_invoke_adapter install "$RUN_RESULT" "" -- --package-root "$real_pkg" ) \
+  >"$tmpdir/invalid-refresh.out" 2>"$tmpdir/invalid-refresh.err" || RUN_RC=$?
+[ "$RUN_RC" -eq 1 ]
+[ ! -f "$RUN_RESULT" ]
+grep -Fq 'unsupported SUPERPOWERS_INSTALL_REFRESH_MODE: invalid' \
+  "$tmpdir/invalid-refresh.err"
 
 run_real_install install-failure-after-mutation
 [ "$RUN_RC" -eq 1 ]
@@ -356,6 +417,7 @@ printf '%s\n' '{"commit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}' \
 printf '%s\n' '{"commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}' \
   > "$fingerprint_b/.superpowers-upstream.json"
 
+# BASELINE CASE: CLI-ENV-CODEX-LISTING-01 fingerprint listing uses override and default command
 RUN_RESULT="$tmpdir/active-fingerprint.result.json"
 SPW_ADAPTER="$root/scripts/adapters/codex/adapter" \
 SUPERPOWERS_CODEX="$fingerprint_codex" \
@@ -372,6 +434,27 @@ SUPERPOWERS_INSTALLED_SEARCH_ROOT="$fingerprint_root" \
 SPW_FINGERPRINT_LISTING='{"installed":[]}' \
   spw_inspect_fingerprint "$RUN_RESULT"
 [ "$(spw_adapter_result_get "$RUN_RESULT" fingerprint)" = "" ]
+
+default_home="$tmpdir/default-home"
+default_version="1.0.0+manager.ccccccc"
+default_cache="$default_home/.codex/plugins/cache/superpowers-manager/superpowers/$default_version"
+default_bin="$tmpdir/default-bin"
+mkdir -p "$default_cache" "$default_bin"
+printf '%s\n' '{"commit":"cccccccccccccccccccccccccccccccccccccccc"}' \
+  > "$default_cache/.superpowers-upstream.json"
+ln -s "$fingerprint_codex" "$default_bin/codex"
+RUN_RESULT="$tmpdir/default-fingerprint.result.json"
+(
+  unset SUPERPOWERS_CODEX SUPERPOWERS_INSTALLED_SEARCH_ROOT
+  PATH="$default_bin:$PATH"
+  HOME="$default_home"
+  SPW_ADAPTER="$root/scripts/adapters/codex/adapter"
+  SPW_FINGERPRINT_LISTING="{\"installed\":[{\"pluginId\":\"superpowers@superpowers-manager\",\"version\":\"$default_version\"}]}"
+  export PATH HOME SPW_ADAPTER SPW_FINGERPRINT_LISTING
+  spw_inspect_fingerprint "$RUN_RESULT"
+)
+[ "$(spw_adapter_result_get "$RUN_RESULT" fingerprint)" = \
+  cccccccccccccccccccccccccccccccccccccccc ]
 
 for invalid_listing in \
   '{' \
@@ -460,5 +543,110 @@ for missing_case in ownership uninstall; do
     exit 1
   fi
 done
+
+# BASELINE CASE: PROV-READER-CODEX-SOURCE-01 Codex source reader profile
+source_upstream="$tmpdir/source-reader-upstream"
+source_candidate="$tmpdir/source-reader-candidate"
+source_provenance="$tmpdir/source-reader-provenance.json"
+mkdir -p "$source_upstream/.codex-plugin"
+cat > "$source_upstream/.codex-plugin/plugin.json" <<'JSON'
+{
+  "name": "superpowers",
+  "version": "6.1.1",
+  "description": "Source reader fixture",
+  "skills": "./skills/",
+  "hooks": {}
+}
+JSON
+
+reset_source_candidate() {
+  rm -rf "$source_candidate"
+  mkdir -p "$source_candidate/.codex-plugin" \
+    "$source_candidate/skills/brainstorming"
+  cat > "$source_candidate/skills/brainstorming/SKILL.md" <<'EOF'
+---
+name: brainstorming
+description: Source reader fixture
+---
+# Brainstorming
+EOF
+  printf '%s\n' license > "$source_candidate/LICENSE"
+  printf '%s\n' readme > "$source_candidate/README.md"
+  printf '%s\n' conduct > "$source_candidate/CODE_OF_CONDUCT.md"
+  cp "$source_provenance" "$source_candidate/.superpowers-upstream.json"
+}
+
+run_source_build() {
+  label="$1"
+  reset_source_candidate
+  SOURCE_RESULT="$tmpdir/source-reader-$label.result.json"
+  SOURCE_STDOUT="$tmpdir/source-reader-$label.stdout"
+  SOURCE_STDERR="$tmpdir/source-reader-$label.stderr"
+  rm -f "$SOURCE_RESULT" "$SOURCE_RESULT.response" \
+    "$SOURCE_STDOUT" "$SOURCE_STDERR"
+  SOURCE_RC=0
+  SPW_ADAPTER="$root/scripts/adapters/codex/adapter" \
+    spw_invoke_adapter build "$SOURCE_RESULT" "" -- \
+      --upstream-root "$source_upstream" \
+      --candidate-root "$source_candidate" \
+      --requested-ref latest-release \
+      --resolved-ref v6.1.1 \
+      --commit d884ae04edebef577e82ff7c4e143debd0bbec99 \
+      --manager-version 6.1.1+manager.d884ae0 \
+      --upstream-manifest-version 6.1.1 \
+      --fallback-manifest \
+        "$root/plugins/superpowers/.codex-plugin/plugin.template.json" \
+      >"$SOURCE_STDOUT" 2>"$SOURCE_STDERR" || SOURCE_RC=$?
+}
+
+cp "$root/tests/fixtures/baseline/provenance/non-standard-constant.json" \
+  "$source_provenance"
+run_source_build constant
+[ "$SOURCE_RC" -eq 1 ]
+grep -Fq 'provenance must contain valid JSON' "$SOURCE_STDERR"
+! grep -Fq 'candidate provenance is missing or invalid' "$SOURCE_STDERR"
+
+python3 -S - "$source_provenance" <<'PY'
+from pathlib import Path
+import sys
+
+Path(sys.argv[1]).write_text(
+    "[" * 2000 + "0" + "]" * 2000 + "\n",
+    encoding="utf-8",
+)
+PY
+run_source_build recursion
+[ "$SOURCE_RC" -eq 1 ]
+grep -Fq 'candidate provenance is missing or invalid' "$SOURCE_STDERR"
+
+cp "$root/tests/fixtures/baseline/provenance/duplicate-key.json" \
+  "$source_provenance"
+run_source_build duplicate
+[ "$SOURCE_RC" -eq 0 ]
+[ -f "$SOURCE_RESULT" ]
+
+python3 -S - \
+  "$root/tests/fixtures/baseline/provenance/valid-tag.json" \
+  "$source_provenance" <<'PY'
+from pathlib import Path
+import sys
+
+source, destination = map(Path, sys.argv[1:])
+destination.write_text(
+    source.read_text(encoding="utf-8") + " " * (1_048_576 + 1),
+    encoding="utf-8",
+)
+PY
+run_source_build large
+[ "$SOURCE_RC" -eq 0 ]
+[ -f "$SOURCE_RESULT" ]
+
+printf '%s\n' \
+  '{"source":"https://example.invalid/superpowers.git"}' \
+  > "$source_provenance"
+run_source_build source-only
+[ "$SOURCE_RC" -eq 1 ]
+grep -Fq 'provenance keys do not match' "$SOURCE_STDERR"
+! grep -Fq 'candidate provenance is missing or invalid' "$SOURCE_STDERR"
 
 echo "test_adapter_protocol: OK"

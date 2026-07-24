@@ -16,6 +16,9 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 VALIDATOR = ROOT / "scripts/adapters/codex/validate-generated-plugin.py"
+FIXTURES = ROOT / "tests" / "fixtures" / "baseline"
+MANIFESTS = FIXTURES / "manifests"
+PROVENANCE = FIXTURES / "provenance"
 COMMIT = "d884ae04edebef577e82ff7c4e143debd0bbec99"
 SOURCE = "https://example.invalid/superpowers.git"
 
@@ -51,15 +54,9 @@ class ValidatorTests(unittest.TestCase):
             encoding="utf-8",
         )
         (self.plugin / "assets" / "logo.svg").write_text("svg\n", encoding="utf-8")
-        self.write_manifest(
-            {
-                "name": "superpowers",
-                "version": self.expected["manifest_version"],
-                "description": "Generated Superpowers",
-                "skills": "./skills/",
-                "interface": {"logo": "./assets/logo.svg", "screenshots": []},
-                "x_future_manifest": {"preserved": True},
-            }
+        shutil.copyfile(
+            MANIFESTS / "candidate-unknown-field.json",
+            self.plugin / ".codex-plugin" / "plugin.json",
         )
         self.write_metadata()
 
@@ -85,16 +82,20 @@ class ValidatorTests(unittest.TestCase):
 
     def write_metadata(self, value: Any | None = None) -> None:
         if value is None:
-            value = {
-                "source": self.expected["source"],
-                "requested_ref": self.expected["requested_ref"],
-                "resolved_ref": self.expected["resolved_ref"],
-                "commit": self.expected["commit"],
-                "upstream_manifest_version": self.expected["upstream_manifest_version"],
-            }
+            shutil.copyfile(
+                PROVENANCE / "valid-tag.json",
+                self.plugin / ".superpowers-upstream.json",
+            )
+            return
         (self.plugin / ".superpowers-upstream.json").write_text(
             json.dumps(value) + "\n", encoding="utf-8"
         )
+
+    def nested_value(self, containers: int) -> Any:
+        value: Any = 0
+        for _ in range(containers):
+            value = [value]
+        return value
 
     def run_validator(self) -> subprocess.CompletedProcess[str]:
         command = [
@@ -145,73 +146,125 @@ class ValidatorTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("generated plugin validation passed", result.stdout)
 
-    def test_full_semver_forms_pass(self) -> None:
-        versions = (
-            "6.1.1+manager.d884ae0",
-            "6.1.0-beta.1+manager.d884ae0",
-            "0.0.0-main+manager.d884ae0",
-            "0.0.0-ref-feature-x+manager.d884ae0",
+    def test_candidate_provenance_reader_profile(self) -> None:
+        metadata_path = self.plugin / ".superpowers-upstream.json"
+
+        # BASELINE CASE: PROV-READER-CANDIDATE-01 candidate provenance validator profile
+        shutil.copyfile(PROVENANCE / "non-standard-constant.json", metadata_path)
+        self.assert_rejected("provenance must contain valid JSON")
+
+        self.reset_candidate()
+        shutil.copyfile(FIXTURES / "selection" / "depth-257.json", metadata_path)
+        self.assert_rejected("provenance exceeds maximum JSON nesting")
+
+        self.reset_candidate()
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        # The root object plus 255 arrays is the exact accepted depth 256.
+        metadata["source"] = self.nested_value(255)
+        self.write_metadata(metadata)
+        result = self.run_validator()
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn(
+            "provenance field `source` does not match expected value",
+            result.stderr,
         )
-        for version in versions:
-            with self.subTest(version=version):
-                self.reset_candidate()
-                self.expected["manifest_version"] = version
-                manifest = self.read_manifest()
-                manifest["version"] = version
-                self.write_manifest(manifest)
-                result = self.run_validator()
-                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("exceeds maximum JSON nesting", result.stderr)
 
-    def test_semver_rejects_unicode_digits(self) -> None:
-        for version in ("1.1١.0", "1.0.0-١"):
-            with self.subTest(version=version):
-                self.reset_candidate()
-                self.expected["manifest_version"] = version
-                manifest = self.read_manifest()
-                manifest["version"] = version
-                self.write_manifest(manifest)
-                self.assert_rejected("field `version` must be SemVer 2.0.0")
+        self.reset_candidate()
+        shutil.copyfile(PROVENANCE / "duplicate-key.json", metadata_path)
+        self.assert_rejected("provenance field `source` does not match")
 
-    def test_json_rejects_nonstandard_numeric_constants(self) -> None:
-        manifest_path = self.plugin / ".codex-plugin" / "plugin.json"
-        manifest_path.write_text(
-            '{"name":"superpowers","version":"6.1.1+manager.d884ae0",'
-            '"description":"Generated Superpowers","skills":"./skills/",'
-            '"x_future_manifest":NaN}\n',
+        self.reset_candidate()
+        metadata_path.write_text(
+            metadata_path.read_text(encoding="utf-8") + " " * (1_048_576 + 1),
             encoding="utf-8",
+        )
+        result = self.run_validator()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+        self.reset_candidate()
+        shutil.copyfile(PROVENANCE / "malformed.json", metadata_path)
+        self.assert_rejected("provenance must contain valid JSON")
+
+        self.reset_candidate()
+        self.write_metadata([])
+        self.assert_rejected("provenance must contain a JSON object")
+
+        self.reset_candidate()
+        shutil.copyfile(PROVENANCE / "wrong-key-set.json", metadata_path)
+        self.assert_rejected("provenance keys do not match")
+
+        mismatches = (
+            ("source", "https://wrong.invalid/repo"),
+            ("requested_ref", "v0.0.0"),
+            ("resolved_ref", "v0.0.0"),
+            ("commit", "0" * 40),
+            ("upstream_manifest_version", "0.0.0"),
+        )
+        for field, value in mismatches:
+            with self.subTest(mismatched=field):
+                self.reset_candidate()
+                metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+                metadata[field] = value
+                self.write_metadata(metadata)
+                self.assert_rejected(
+                    f"provenance field `{field}` does not match expected value"
+                )
+
+        self.reset_candidate()
+        shutil.copyfile(PROVENANCE / "commit-7-hex.json", metadata_path)
+        self.expected["commit"] = "d884ae0"
+        self.assert_rejected("commit must be 40 lowercase hexadecimal characters")
+
+        self.reset_candidate()
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        metadata["commit"] = "D" * 40
+        self.write_metadata(metadata)
+        self.expected["commit"] = "D" * 40
+        self.assert_rejected("commit must be 40 lowercase hexadecimal characters")
+
+    def test_candidate_manifest_reader_profile(self) -> None:
+        manifest_path = self.plugin / ".codex-plugin" / "plugin.json"
+
+        # BASELINE CASE: MANIFEST-READER-VALIDATOR-01 candidate validator profile
+        shutil.copyfile(
+            MANIFESTS / "candidate-non-standard-constant.json",
+            manifest_path,
         )
         self.assert_rejected("plugin manifest must contain valid JSON")
 
         self.reset_candidate()
-        metadata_path = self.plugin / ".superpowers-upstream.json"
-        metadata_path.write_text(
-            '{"source":"https://example.invalid/superpowers.git",'
-            '"requested_ref":"latest-release","resolved_ref":"v6.1.1",'
-            f'"commit":"{COMMIT}","upstream_manifest_version":Infinity}}\n',
-            encoding="utf-8",
-        )
-        self.assert_rejected("provenance must contain valid JSON")
-
-    def test_json_rejects_excessive_nesting_without_traceback(self) -> None:
-        nested = "[" * 2000 + "0" + "]" * 2000
-        manifest_path = self.plugin / ".codex-plugin" / "plugin.json"
-        manifest_path.write_text(
-            '{"name":"superpowers","version":"6.1.1+manager.d884ae0",'
-            '"description":"Generated Superpowers","skills":"./skills/",'
-            f'"x_future_manifest":{nested}}}\n',
-            encoding="utf-8",
+        shutil.copyfile(
+            FIXTURES / "selection" / "depth-257.json",
+            manifest_path,
         )
         self.assert_rejected("plugin manifest exceeds maximum JSON nesting")
 
-    def test_skill_enumeration_oserror_is_reported_deterministically(self) -> None:
-        validate_tree = runpy.run_path(str(VALIDATOR))["validate_tree"]
-        errors: list[str] = []
-        with mock.patch.object(Path, "iterdir", side_effect=OSError("fixture error")):
-            validate_tree(self.plugin, "forbid", errors)
-        self.assertIn("skills directory could not be enumerated", errors)
+        self.reset_candidate()
+        manifest = self.read_manifest()
+        # The root object plus 255 arrays is the exact accepted depth 256.
+        manifest["x_future_manifest"] = self.nested_value(255)
+        self.write_manifest(manifest)
+        result = self.run_validator()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("generated plugin validation passed", result.stdout)
 
-    def test_manifest_json_shape_and_owned_fields_fail_closed(self) -> None:
-        manifest_path = self.plugin / ".codex-plugin" / "plugin.json"
+        self.reset_candidate()
+        shutil.copyfile(
+            MANIFESTS / "candidate-duplicate-key.json",
+            manifest_path,
+        )
+        self.assert_rejected("field `name` must equal `superpowers`")
+
+        self.reset_candidate()
+        manifest_path.write_text(
+            manifest_path.read_text(encoding="utf-8") + " " * (1_048_576 + 1),
+            encoding="utf-8",
+        )
+        result = self.run_validator()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+        self.reset_candidate()
         manifest_path.write_text("{bad", encoding="utf-8")
         self.assert_rejected("must contain valid JSON")
 
@@ -254,6 +307,103 @@ class ValidatorTests(unittest.TestCase):
         manifest["version"] = 611
         self.write_manifest(manifest)
         self.assert_rejected("field `version` must be SemVer 2.0.0")
+
+        self.reset_candidate()
+        manifest = self.read_manifest()
+        manifest["apps"] = "/absolute/.app.json"
+        self.write_manifest(manifest)
+        self.assert_rejected("field `apps` must be a relative path")
+
+        self.reset_candidate()
+        manifest = self.read_manifest()
+        manifest["interface"]["logo"] = "../outside.svg"
+        self.write_manifest(manifest)
+        self.assert_rejected("escapes the plugin root")
+
+        self.reset_candidate()
+        manifest = self.read_manifest()
+        manifest["interface"]["screenshots"] = ["./assets/missing.png"]
+        self.write_manifest(manifest)
+        self.assert_rejected("does not exist")
+
+        self.reset_candidate()
+        manifest = self.read_manifest()
+        manifest["interface"] = "not-an-object"
+        self.write_manifest(manifest)
+        self.assert_rejected("field `interface` must be an object")
+
+        self.reset_candidate()
+        manifest = self.read_manifest()
+        manifest["mcpServers"] = 17
+        self.write_manifest(manifest)
+        self.assert_rejected("field `mcpServers` must be a string or object")
+
+        self.reset_candidate()
+        manifest = self.read_manifest()
+        manifest["apps"] = 17
+        self.write_manifest(manifest)
+        self.assert_rejected("field `apps` must be a non-empty relative path")
+
+        self.reset_candidate()
+        manifest = self.read_manifest()
+        manifest["interface"]["screenshots"] = "./assets/logo.svg"
+        self.write_manifest(manifest)
+        self.assert_rejected("field `interface.screenshots` must be an array")
+
+        if hasattr(os, "symlink"):
+            self.reset_candidate()
+            outside = Path(self.tempdir.name) / "outside.svg"
+            outside.write_text("outside\n", encoding="utf-8")
+            (self.plugin / "assets" / "escape.svg").symlink_to(outside)
+            manifest = self.read_manifest()
+            manifest["interface"]["logo"] = "./assets/escape.svg"
+            self.write_manifest(manifest)
+            self.assert_rejected("escapes the plugin root")
+
+    def test_full_semver_forms_pass(self) -> None:
+        versions = (
+            "6.1.1+manager.d884ae0",
+            "6.1.0-beta.1+manager.d884ae0",
+            "0.0.0-main+manager.d884ae0",
+            "0.0.0-ref-feature-x+manager.d884ae0",
+        )
+        for version in versions:
+            with self.subTest(version=version):
+                self.reset_candidate()
+                self.expected["manifest_version"] = version
+                manifest = self.read_manifest()
+                manifest["version"] = version
+                self.write_manifest(manifest)
+                result = self.run_validator()
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_semver_rejects_unicode_digits(self) -> None:
+        for version in ("1.1١.0", "1.0.0-١"):
+            with self.subTest(version=version):
+                self.reset_candidate()
+                self.expected["manifest_version"] = version
+                manifest = self.read_manifest()
+                manifest["version"] = version
+                self.write_manifest(manifest)
+                self.assert_rejected("field `version` must be SemVer 2.0.0")
+
+    def test_json_rejects_excessive_nesting_without_traceback(self) -> None:
+        nested = "[" * 2000 + "0" + "]" * 2000
+        manifest_path = self.plugin / ".codex-plugin" / "plugin.json"
+        manifest_path.write_text(
+            '{"name":"superpowers","version":"6.1.1+manager.d884ae0",'
+            '"description":"Generated Superpowers","skills":"./skills/",'
+            f'"x_future_manifest":{nested}}}\n',
+            encoding="utf-8",
+        )
+        self.assert_rejected("plugin manifest exceeds maximum JSON nesting")
+
+    def test_skill_enumeration_oserror_is_reported_deterministically(self) -> None:
+        validate_tree = runpy.run_path(str(VALIDATOR))["validate_tree"]
+        errors: list[str] = []
+        with mock.patch.object(Path, "iterdir", side_effect=OSError("fixture error")):
+            validate_tree(self.plugin, "forbid", errors)
+        self.assertIn("skills directory could not be enumerated", errors)
 
     def test_required_tree_and_skill_structure_fail_closed(self) -> None:
         required = (
@@ -551,86 +701,6 @@ class ValidatorTests(unittest.TestCase):
                 skill = self.plugin / "skills" / "brainstorming" / "SKILL.md"
                 skill.write_text(contents, encoding="utf-8")
                 self.assert_rejected(fragment)
-
-    def test_known_paths_fail_on_bad_types_escape_and_missing_targets(self) -> None:
-        manifest = self.read_manifest()
-        manifest["apps"] = "/absolute/.app.json"
-        self.write_manifest(manifest)
-        self.assert_rejected("field `apps` must be a relative path")
-
-        self.reset_candidate()
-        manifest = self.read_manifest()
-        manifest["interface"]["logo"] = "../outside.svg"
-        self.write_manifest(manifest)
-        self.assert_rejected("escapes the plugin root")
-
-        self.reset_candidate()
-        manifest = self.read_manifest()
-        manifest["interface"]["screenshots"] = ["./assets/missing.png"]
-        self.write_manifest(manifest)
-        self.assert_rejected("does not exist")
-
-        self.reset_candidate()
-        manifest = self.read_manifest()
-        manifest["interface"] = "not-an-object"
-        self.write_manifest(manifest)
-        self.assert_rejected("field `interface` must be an object")
-
-        self.reset_candidate()
-        manifest = self.read_manifest()
-        manifest["mcpServers"] = 17
-        self.write_manifest(manifest)
-        self.assert_rejected("field `mcpServers` must be a string or object")
-
-        self.reset_candidate()
-        manifest = self.read_manifest()
-        manifest["apps"] = 17
-        self.write_manifest(manifest)
-        self.assert_rejected("field `apps` must be a non-empty relative path")
-
-        self.reset_candidate()
-        manifest = self.read_manifest()
-        manifest["interface"]["screenshots"] = "./assets/logo.svg"
-        self.write_manifest(manifest)
-        self.assert_rejected("field `interface.screenshots` must be an array")
-
-        if hasattr(os, "symlink"):
-            self.reset_candidate()
-            outside = Path(self.tempdir.name) / "outside.svg"
-            outside.write_text("outside\n", encoding="utf-8")
-            (self.plugin / "assets" / "escape.svg").symlink_to(outside)
-            manifest = self.read_manifest()
-            manifest["interface"]["logo"] = "./assets/escape.svg"
-            self.write_manifest(manifest)
-            self.assert_rejected("escapes the plugin root")
-
-    def test_provenance_shape_values_and_commit_fail_closed(self) -> None:
-        (self.plugin / ".superpowers-upstream.json").write_text("{bad", encoding="utf-8")
-        self.assert_rejected("provenance must contain valid JSON")
-
-        self.reset_candidate()
-        self.write_metadata([])
-        self.assert_rejected("provenance must contain a JSON object")
-
-        self.reset_candidate()
-        metadata = json.loads((self.plugin / ".superpowers-upstream.json").read_text())
-        metadata.pop("resolved_ref")
-        self.write_metadata(metadata)
-        self.assert_rejected("provenance keys do not match")
-
-        self.reset_candidate()
-        metadata = json.loads((self.plugin / ".superpowers-upstream.json").read_text())
-        metadata["source"] = "https://wrong.invalid/repo"
-        self.write_metadata(metadata)
-        self.assert_rejected("provenance field `source` does not match")
-
-        self.reset_candidate()
-        metadata = json.loads((self.plugin / ".superpowers-upstream.json").read_text())
-        metadata["commit"] = "D" * 40
-        self.write_metadata(metadata)
-        self.expected["commit"] = "D" * 40
-        self.assert_rejected("commit must be 40 lowercase hexadecimal characters")
-
 
 if __name__ == "__main__":
     unittest.main()

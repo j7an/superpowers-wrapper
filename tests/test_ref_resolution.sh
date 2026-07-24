@@ -10,6 +10,16 @@ spw_test_root
 
 spw_test_tmpdir
 
+# BASELINE CASE: BUILDER-GIT-01 deterministic tagged repository
+builder_out=$(
+  sh "$root/tests/builders/baseline-scenario.sh" git-release-repo \
+    "$tmpdir/baseline-upstream"
+)
+repo=$(printf '%s\n' "$builder_out" | sed -n 's/^REPO=//p')
+stable_commit=$(printf '%s\n' "$builder_out" | sed -n 's/^STABLE_COMMIT=//p')
+test -d "$repo/.git"
+test "$(git -C "$repo" rev-parse 'refs/tags/v1.1.0^{}')" = "$stable_commit"
+
 fixture_config_root="$tmpdir/config-root"
 mkdir -p "$fixture_config_root/config"
 printf '%s\n' 'v6.0.3' > "$fixture_config_root/config/upstream-ref"
@@ -26,8 +36,11 @@ cat > "$tmpdir/ls-remote-tags.txt" <<'EOF'
 3333333333333333333333333333333333333333	refs/tags/v6.0.10
 4444444444444444444444444444444444444444	refs/tags/v6.0.10^{}
 5555555555555555555555555555555555555555	refs/tags/v6.1.0-beta.1
+6666666666666666666666666666666666666666	refs/tags/v7.0
+7777777777777777777777777777777777777777	refs/tags/v8.0.0+build
 EOF
 
+# BASELINE CASE: REF-LATEST-STABLE-01 numeric stable release selection and peeling
 selected=$(spw_select_latest_release_from_ls_remote < "$tmpdir/ls-remote-tags.txt")
 if [ "$selected" != "v6.0.10 4444444444444444444444444444444444444444" ]; then
   echo "unexpected latest release: $selected" >&2
@@ -89,9 +102,13 @@ test "$lightweight_tag_resolved" = "tag v1.2.2 $main_commit"
 raw_resolved=$(spw_resolve_ref "$repo" "$main_commit")
 test "$raw_resolved" = "raw-commit $main_commit $main_commit"
 
+# BASELINE CASE: REF-GENERIC-FALLBACK-01 arbitrary refs fall back after tag lookup
 main_resolved=$(spw_resolve_ref "$repo" "main")
 test "$main_resolved" = "ref main $main_commit"
+branch_named_like_tag=$(spw_resolve_ref "$repo" "v9.9.9")
+test "$branch_named_like_tag" = "ref v9.9.9 $main_commit"
 
+# BASELINE CASE: REF-SOURCE-PROOF-01 selected source must supply a commit object
 # Preparing a saved exact pin must obtain that exact object from the effective
 # source and prove it is a commit inside the persistent cache repository.
 exact_cache="$tmpdir/exact-cache"
@@ -133,6 +150,7 @@ fi
 grep -Fq "requested object is not a commit: $release_tag_object" \
   "$tmpdir/tag-object-fetch.err"
 
+# BASELINE CASE: REF-CLEANUP-01 interrupted source proof cleans only its workspace
 # A trapped source-proof fetch removes only its invocation-owned repository.
 signal_bin="$tmpdir/fetch-signal-bin"
 signal_workspace="$tmpdir/signal-workspace"
@@ -200,9 +218,6 @@ grep -Fq -- "-C $signal_workspace/superpowers-manager.fetch." \
   "$tmpdir/signal-git.log"
 test "$(find "$signal_workspace" -mindepth 1 -maxdepth 1 -print | wc -l | tr -d ' ')" -eq 1
 test "$(cat "$signal_workspace/sibling")" = keep
-
-branch_named_like_tag=$(spw_resolve_ref "$repo" "v9.9.9")
-test "$branch_named_like_tag" = "ref v9.9.9 $main_commit"
 
 if spw_select_latest_release_from_ls_remote < /dev/null >/dev/null 2>&1; then
   echo "expected empty tag list to fail" >&2

@@ -7,6 +7,18 @@ spw_test_root
 spw_test_tmpdir
 tmpdir_physical=$(CDPATH= cd -- "$tmpdir" && pwd -P)
 
+# BASELINE CASE: BUILDER-SYMLINK-01 deterministic broken and escaping symlinks
+for symlink_scenario in broken-symlink escaping-symlink; do
+  builder_out=$(
+    sh "$root/tests/builders/baseline-scenario.sh" "$symlink_scenario" \
+      "$tmpdir/$symlink_scenario"
+  )
+  scenario_root=$(printf '%s\n' "$builder_out" | sed -n 's/^ROOT=//p')
+  scenario_target=$(printf '%s\n' "$builder_out" | sed -n 's/^TARGET=//p')
+  test -d "$scenario_root"
+  test -L "$scenario_target"
+done
+
 upstream="$tmpdir/upstream"
 output="$tmpdir/out"
 home="$tmpdir/home"
@@ -176,6 +188,24 @@ with path.open("w", encoding="utf-8") as handle:
 PY
 }
 
+write_depth_256_manifest() {
+  source="$1"
+  destination="$2"
+  python3 -S - "$source" "$destination" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+source, destination = map(Path, sys.argv[1:])
+data = json.loads(source.read_text(encoding="utf-8"))
+value = 0
+for _ in range(255):
+    value = [value]
+data["x_future_manifest"] = value
+destination.write_text(json.dumps(data) + "\n", encoding="utf-8")
+PY
+}
+
 commit_hook_ref() {
   ref="$1"
   message="$2"
@@ -185,13 +215,20 @@ commit_hook_ref() {
 }
 
 git -C "$upstream" checkout -b hooks-empty-object >/dev/null
-set_manifest_hooks value '{}'
+cp "$root/tests/fixtures/baseline/manifests/upstream-empty-hooks.json" \
+  "$upstream/.codex-plugin/plugin.json"
 commit_hook_ref hooks-empty-object "manifest explicitly disables hooks"
 
 git -C "$upstream" checkout -b hooks-empty-array >/dev/null
-set_manifest_hooks value '[]'
+cp "$root/tests/fixtures/baseline/manifests/upstream-default-hooks.json" \
+  "$upstream/.codex-plugin/plugin.json"
 cp "$upstream/hooks/hooks-codex.json" "$upstream/hooks/hooks.json"
 commit_hook_ref hooks-empty-array "empty hook array uses default discovery"
+
+git -C "$upstream" checkout -b hooks-active-fixture >/dev/null
+cp "$root/tests/fixtures/baseline/manifests/upstream-active-hooks.json" \
+  "$upstream/.codex-plugin/plugin.json"
+commit_hook_ref hooks-active-fixture "manifest uses declared upstream hooks"
 
 git -C "$upstream" checkout -b hooks-string-array >/dev/null
 set_manifest_hooks value '["./config/hooks-first.json","./alternate/hooks-second.json"]'
@@ -209,7 +246,8 @@ set_manifest_hooks value '[{"SessionStart":[{"hooks":[{"type":"command","command
 commit_hook_ref hooks-inline-array "manifest declares an inline hook array"
 
 git -C "$upstream" checkout -b hooks-default >/dev/null
-set_manifest_hooks absent
+cp "$root/tests/fixtures/baseline/manifests/upstream-no-hooks.json" \
+  "$upstream/.codex-plugin/plugin.json"
 cp "$upstream/hooks/hooks-codex.json" "$upstream/hooks/hooks.json"
 commit_hook_ref hooks-default "manifest uses default hook discovery"
 
@@ -351,6 +389,43 @@ git -C "$upstream" add .codex-plugin/plugin.json
 spw_git_commit "$upstream" "deeply nested manifest JSON"
 git -C "$upstream" checkout main >/dev/null
 
+git -C "$upstream" checkout -b reader-depth-257 >/dev/null
+cp "$root/tests/fixtures/baseline/selection/depth-257.json" \
+  "$upstream/.codex-plugin/plugin.json"
+git -C "$upstream" add .codex-plugin/plugin.json
+spw_git_commit "$upstream" "manifest reader depth 257"
+git -C "$upstream" checkout main >/dev/null
+
+git -C "$upstream" checkout -b reader-depth-256 >/dev/null
+write_depth_256_manifest \
+  "$root/tests/fixtures/baseline/manifests/upstream-active-hooks.json" \
+  "$upstream/.codex-plugin/plugin.json"
+git -C "$upstream" add .codex-plugin/plugin.json
+spw_git_commit "$upstream" "manifest reader depth 256"
+git -C "$upstream" checkout main >/dev/null
+
+git -C "$upstream" checkout -b reader-duplicate >/dev/null
+cp "$root/tests/fixtures/baseline/manifests/candidate-duplicate-key.json" \
+  "$upstream/.codex-plugin/plugin.json"
+git -C "$upstream" add .codex-plugin/plugin.json
+spw_git_commit "$upstream" "manifest reader duplicate key"
+git -C "$upstream" checkout main >/dev/null
+
+git -C "$upstream" checkout -b reader-large >/dev/null
+python3 -S - "$upstream/.codex-plugin/plugin.json" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+path.write_text(
+    path.read_text(encoding="utf-8") + " " * (1_048_576 + 1),
+    encoding="utf-8",
+)
+PY
+git -C "$upstream" add .codex-plugin/plugin.json
+spw_git_commit "$upstream" "manifest reader large valid input"
+git -C "$upstream" checkout main >/dev/null
+
 git -C "$upstream" checkout -b feature/foo >/dev/null
 printf 'feature data\n' > "$upstream/skills/brainstorming/feature.txt"
 git -C "$upstream" add skills/brainstorming/feature.txt
@@ -392,6 +467,28 @@ assert_manifest_lacks_key() {
   key=$2
   spw_assert_json absent \
     "$tmpdir/$destination/.codex-plugin/plugin.json" "/$key"
+}
+
+assert_generated_tree_matches() {
+  destination=$1
+  fixture=$2
+  actual="$tmpdir/$destination.tree.txt"
+  python3 -S - "$tmpdir/$destination" "$actual" <<'PY'
+from pathlib import Path
+import sys
+
+root, output = map(Path, sys.argv[1:])
+paths = []
+for path in root.rglob("*"):
+    relative = path.relative_to(root).as_posix()
+    paths.append(relative + "/" if path.is_dir() else relative)
+output.write_text("\n".join(sorted(paths)) + "\n", encoding="utf-8")
+PY
+  if ! cmp -s "$fixture" "$actual"; then
+    echo "generated tree does not match fixture: $fixture" >&2
+    diff -u "$fixture" "$actual" >&2 || true
+    exit 1
+  fi
 }
 
 run_prepare_for_ref_with_env() {
@@ -534,6 +631,109 @@ assert_prepare_metadata_value() {
   assert_json_string \
     "$tmpdir/$destination/.superpowers-upstream.json" "/$key" "$expected"
 }
+
+# BASELINE CASE: MANIFEST-READER-MATERIALIZE-01 hook materializer profile
+materialize_root="$tmpdir/materialize-reader"
+materialize_upstream="$materialize_root/upstream"
+materialize_candidate="$materialize_root/candidate"
+materialize_manifest="$materialize_candidate/.codex-plugin/plugin.json"
+mkdir -p "$materialize_upstream" \
+  "$materialize_candidate/.codex-plugin"
+run_materializer() {
+  python3 -S "$root/scripts/adapters/codex/materialize-hooks.py" \
+    --manifest "$materialize_manifest" \
+    --manifest-source upstream \
+    --upstream-root "$materialize_upstream" \
+    --candidate-root "$materialize_candidate"
+}
+cp "$root/tests/fixtures/baseline/manifests/candidate-non-standard-constant.json" \
+  "$materialize_manifest"
+if run_materializer >"$materialize_root/constant.out" 2>&1; then
+  echo "hook materializer accepted a non-standard constant" >&2
+  exit 1
+fi
+grep -Fq 'non-standard numeric constant' "$materialize_root/constant.out"
+cp "$root/tests/fixtures/baseline/selection/depth-257.json" \
+  "$materialize_manifest"
+if run_materializer >"$materialize_root/depth.out" 2>&1; then
+  echo "hook materializer accepted depth 257" >&2
+  exit 1
+fi
+grep -Fq 'JSON nesting exceeds limit' "$materialize_root/depth.out"
+write_depth_256_manifest \
+  "$root/tests/fixtures/baseline/manifests/candidate-unknown-field.json" \
+  "$materialize_manifest"
+run_materializer
+cp "$root/tests/fixtures/baseline/manifests/candidate-duplicate-key.json" \
+  "$materialize_manifest"
+run_materializer
+python3 -S - \
+  "$root/tests/fixtures/baseline/manifests/candidate-unknown-field.json" \
+  "$materialize_manifest" <<'PY'
+from pathlib import Path
+import sys
+
+source, destination = map(Path, sys.argv[1:])
+destination.write_text(
+    source.read_text(encoding="utf-8") + " " * (1_048_576 + 1),
+    encoding="utf-8",
+)
+PY
+run_materializer
+
+# BASELINE CASE: MANIFEST-READER-OVERLAY-01 manifest overlay profile
+. "$root/scripts/adapters/codex/lib.sh"
+overlay_manifest="$tmpdir/overlay-reader.json"
+cp "$root/tests/fixtures/baseline/manifests/candidate-non-standard-constant.json" \
+  "$overlay_manifest"
+if spw_apply_manifest_overlay "$overlay_manifest" "9.8.7+manager.0123456" \
+    >"$tmpdir/overlay-constant.out" 2>&1; then
+  echo "manifest overlay accepted a non-standard constant" >&2
+  exit 1
+fi
+grep -Fq 'non-standard numeric constant' "$tmpdir/overlay-constant.out"
+printf '%s\n' '[]' > "$overlay_manifest"
+if spw_apply_manifest_overlay "$overlay_manifest" "9.8.7+manager.0123456" \
+    >"$tmpdir/overlay-object.out" 2>&1; then
+  echo "manifest overlay accepted a non-object" >&2
+  exit 1
+fi
+grep -Fq 'manifest must be a JSON object' "$tmpdir/overlay-object.out"
+cp "$root/tests/fixtures/baseline/selection/depth-257.json" \
+  "$overlay_manifest"
+if spw_apply_manifest_overlay "$overlay_manifest" "9.8.7+manager.0123456" \
+    >"$tmpdir/overlay-depth.out" 2>&1; then
+  echo "manifest overlay accepted depth 257" >&2
+  exit 1
+fi
+grep -Fq 'JSON nesting exceeds limit' "$tmpdir/overlay-depth.out"
+write_depth_256_manifest \
+  "$root/tests/fixtures/baseline/manifests/candidate-unknown-field.json" \
+  "$overlay_manifest"
+spw_apply_manifest_overlay "$overlay_manifest" "9.8.7+manager.0123456"
+spw_assert_json equal "$overlay_manifest" /version '"9.8.7+manager.0123456"'
+cp "$root/tests/fixtures/baseline/manifests/candidate-duplicate-key.json" \
+  "$overlay_manifest"
+spw_apply_manifest_overlay "$overlay_manifest" "9.8.7+manager.0123456"
+spw_assert_json equal "$overlay_manifest" /name '"renamed"'
+spw_assert_json equal "$overlay_manifest" /version '"9.8.7+manager.0123456"'
+spw_assert_json equal "$overlay_manifest" /skills '"./skills/"'
+python3 -S - \
+  "$root/tests/fixtures/baseline/manifests/candidate-unknown-field.json" \
+  "$overlay_manifest" <<'PY'
+from pathlib import Path
+import sys
+
+source, destination = map(Path, sys.argv[1:])
+destination.write_text(
+    source.read_text(encoding="utf-8") + " " * (1_048_576 + 1),
+    encoding="utf-8",
+)
+PY
+spw_apply_manifest_overlay "$overlay_manifest" "9.8.7+manager.0123456"
+spw_assert_json equal \
+  "$overlay_manifest" /x_future_manifest/nested/2 '"preserve-me"'
+spw_assert_json equal "$overlay_manifest" /version '"9.8.7+manager.0123456"'
 
 run_prepare_with_saved_selection() {
   config_dir="$1"
@@ -693,6 +893,7 @@ grep -Fq "build --upstream-root $recorded_upstream_root" "$adapter_log"
 grep -Fq -- "--upstream-manifest-version 6.0.3" "$adapter_log"
 grep -Fq -- "--fallback-manifest $pkg/plugins/superpowers/.codex-plugin/plugin.template.json" "$adapter_log"
 
+# BASELINE CASE: CLI-ENV-PREPARE-PATHS-01 relative prepare paths use invocation cwd
 relative_workdir="$tmpdir/relative-workdir"
 relative_adapter_log="$tmpdir/relative-adapter.log"
 mkdir -p "$relative_workdir"
@@ -745,6 +946,7 @@ test -f "$tmpdir/out-latest/hooks/hooks-codex.json"
 test -f "$tmpdir/out-latest/hooks/session-start-codex"
 test -f "$tmpdir/out-latest/hooks/support/helper.txt"
 
+# BASELINE CASE: GENERATED-HOOKS-FORBID-01 explicit empty and fallback stay hook-free
 run_prepare_for_ref "hooks-empty-object" "out-hooks-empty-object"
 assert_manifest_json "out-hooks-empty-object" "/hooks" '{}'
 if [ -e "$tmpdir/out-hooks-empty-object/hooks" ]; then
@@ -752,12 +954,28 @@ if [ -e "$tmpdir/out-hooks-empty-object/hooks" ]; then
   exit 1
 fi
 
+# BASELINE CASE: GENERATED-HOOKS-DEFAULT-01 absent and empty-array default discovery
 run_prepare_for_ref "hooks-empty-array" "out-hooks-empty-array"
 assert_manifest_json "out-hooks-empty-array" "/hooks" '[]'
 test -f "$tmpdir/out-hooks-empty-array/hooks/hooks.json"
 test -f "$tmpdir/out-hooks-empty-array/hooks/hooks-codex.json"
 test -f "$tmpdir/out-hooks-empty-array/hooks/session-start-codex"
 test -f "$tmpdir/out-hooks-empty-array/hooks/support/helper.txt"
+# Layout fixtures contain only relative paths, so no dynamic commit, version, or
+# source values require normalization.
+assert_generated_tree_matches \
+  "out-hooks-empty-array" \
+  "$root/tests/fixtures/baseline/generated-tree/default-hooks.txt"
+
+# BASELINE CASE: GENERATED-HOOKS-DECLARED-01 declared path and inline hook forms
+run_prepare_for_ref "hooks-active-fixture" "out-hooks-active-fixture"
+assert_manifest_json \
+  "out-hooks-active-fixture" "/hooks" \
+  "$(json_string "./hooks/hooks-codex.json")"
+assert_manifest_json \
+  "out-hooks-active-fixture" "/x_future_manifest" \
+  '{"nested":[true,null,"preserve-me"]}'
+test -f "$tmpdir/out-hooks-active-fixture/hooks/hooks-codex.json"
 
 run_prepare_for_ref "hooks-string-array" "out-hooks-string-array"
 assert_manifest_json \
@@ -769,6 +987,9 @@ grep -Fxq \
 grep -Fxq \
   '{"fixture":"second"}' \
   "$tmpdir/out-hooks-string-array/alternate/hooks-second.json"
+assert_generated_tree_matches \
+  "out-hooks-string-array" \
+  "$root/tests/fixtures/baseline/generated-tree/declared-hooks.txt"
 
 run_prepare_for_ref "hooks-inline" "out-hooks-inline"
 assert_manifest_json \
@@ -847,6 +1068,7 @@ leading_zero_short=$(printf '%s' "$leading_zero_commit" | cut -c 1-7)
 assert_prepare_commit "out-leading-zero" "$leading_zero_commit"
 assert_prepare_version "out-leading-zero" "0.0.0-ref-042+manager.$leading_zero_short"
 
+# BASELINE CASE: GENERATED-FALLBACK-01 manifest-less upstream uses manager fallback
 run_prepare_for_ref "v5.0.0" "out-legacy"
 legacy_short=$(printf '%s' "$legacy_commit" | cut -c 1-7)
 assert_prepare_commit "out-legacy" "$legacy_commit"
@@ -863,12 +1085,33 @@ run_prepare_for_ref "$feature_commit" "out-raw"
 assert_prepare_commit "out-raw" "$feature_commit"
 assert_prepare_version "out-raw" "0.0.0+manager.$feature_short"
 
+# BASELINE CASE: GENERATED-WRONG-NAME-01 wrong upstream name is rejected
 assert_bad_manifest_error "out-bad-manifest"
+
+# BASELINE CASE: MANIFEST-READER-UPSTREAM-01 upstream manifest reader profile
 assert_rejected_manifest_input "nonstandard-json" "out-nonstandard-json" "invalid JSON in"
+assert_rejected_manifest_input \
+  "reader-depth-257" "out-reader-depth-257" "JSON nesting exceeds limit in"
+run_prepare_for_ref "reader-depth-256" "out-reader-depth-256"
+reader_depth_256_commit=$(git -C "$upstream" rev-parse reader-depth-256)
+reader_depth_256_short=$(printf '%s' "$reader_depth_256_commit" | cut -c 1-7)
+assert_prepare_version \
+  "out-reader-depth-256" \
+  "0.0.0-ref-reader-depth-256+manager.$reader_depth_256_short"
+assert_prepare_upstream_manifest_version "out-reader-depth-256" "6.1.1"
+assert_rejected_manifest_input \
+  "reader-duplicate" "out-reader-duplicate" \
+  'field `name` must equal `superpowers`'
+run_prepare_for_ref "reader-large" "out-reader-large"
+assert_manifest_json \
+  "out-reader-large" "/x_future_manifest" \
+  '{"items":[1,"two"],"preserved":true}'
+
 assert_rejected_manifest_input "unreadable-manifest" "out-unreadable-manifest" "cannot read JSON in"
 assert_rejected_manifest_input "unencodable-manifest-version" "out-unencodable-version" "cannot output JSON value from"
 assert_rejected_manifest_input "deeply-nested-json" "out-deeply-nested" "JSON nesting exceeds limit in"
 
+# BASELINE CASE: FS-HOOK-CONTAINMENT-01 unsafe hook paths and symlinks fail closed
 assert_hook_prepare_failure \
   "hooks-scalar" "out-hooks-scalar" \
   "hook classification failed: unsupported or mixed hooks declaration"
@@ -1028,6 +1271,51 @@ fi
   echo "built-in failure must preserve the previous generated tree" >&2
   exit 1
 }
+
+# BASELINE CASE: FS-ATOMIC-SWAP-01 failed activation restores the prior tree
+atomic_parent="$tmpdir/atomic-swap"
+atomic_live="$atomic_parent/live"
+atomic_candidate="$atomic_parent/candidate"
+atomic_bin="$atomic_parent/bin"
+atomic_count="$atomic_parent/mv-count"
+mkdir -p "$atomic_live" "$atomic_candidate" "$atomic_bin"
+printf '%s\n' 'prior tree' > "$atomic_live/sentinel"
+printf '%s\n' 'candidate tree' > "$atomic_candidate/sentinel"
+real_mv=$(command -v mv)
+cat > "$atomic_bin/mv" <<'SH'
+#!/bin/sh
+set -eu
+count=0
+if [ -f "$SPW_TEST_MV_COUNT" ]; then
+  count=$(cat "$SPW_TEST_MV_COUNT")
+fi
+count=$((count + 1))
+printf '%s\n' "$count" > "$SPW_TEST_MV_COUNT"
+if [ "$count" -eq 2 ]; then
+  exit 1
+fi
+exec "$SPW_TEST_REAL_MV" "$@"
+SH
+chmod +x "$atomic_bin/mv"
+atomic_rc=0
+PATH="$atomic_bin:$PATH" \
+SPW_TEST_MV_COUNT="$atomic_count" \
+SPW_TEST_REAL_MV="$real_mv" \
+  sh -c '
+    set -eu
+    . "$1/scripts/core/common.sh"
+    . "$1/scripts/core/lifecycle.sh"
+    spw_replace_generated_tree "$2" "$3"
+  ' sh "$root" "$atomic_candidate" "$atomic_live" \
+  >"$atomic_parent/out" 2>"$atomic_parent/err" || atomic_rc=$?
+[ "$atomic_rc" -eq 1 ]
+grep -Fq 'previous tree restored' "$atomic_parent/err"
+[ "$(cat "$atomic_live/sentinel")" = 'prior tree' ]
+[ ! -e "$atomic_candidate" ]
+if find "$atomic_parent" -maxdepth 1 -name '.superpowers.bak.*' -print | grep -q .; then
+  echo "failed activation left a backup tree" >&2
+  exit 1
+fi
 
 template_after=$(cksum "$template")
 if [ "$template_before" != "$template_after" ]; then
