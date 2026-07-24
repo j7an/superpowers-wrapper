@@ -8,7 +8,6 @@ import {
   readFileSync,
   readlinkSync,
   readdirSync,
-  rmSync,
   statSync,
   symlinkSync,
   writeFileSync,
@@ -402,33 +401,29 @@ test('CLI-HOST-TOOLS-01 resolves a pyenv-style Python shim before sandboxing', (
 
 test('CLI-HOST-TOOLS-02 removes an unregistered root after a smoke-check failure', () => {
   const originalPath = process.env.PATH;
+  const originalTmpdir = process.env.TMPDIR;
   const hostSandbox = createSandbox();
-  const temporaryParent = dirname(hostSandbox.root);
-  const baselineRoots = () => readdirSync(temporaryParent)
-    .filter((name) => name.startsWith('spw-baseline-'))
-    .sort();
-  const rootsBefore = baselineRoots();
   try {
     const shimDirectory = join(hostSandbox.root, 'broken-git-shim');
+    const temporaryParent = join(hostSandbox.root, 'smoke-check-tmp');
     mkdirSync(shimDirectory);
+    mkdirSync(temporaryParent);
     const shim = join(shimDirectory, 'git');
     writeFileSync(shim, '#!/usr/bin/env bash\nexit 0\n', 'utf8');
     chmodSync(shim, 0o755);
     process.env.PATH = `${shimDirectory}${delimiter}${originalPath || ''}`;
+    process.env.TMPDIR = temporaryParent;
 
     assert.throws(
       () => createSandbox(),
       /sandbox tool setup failed for git under controlled PATH/,
     );
-    assert.deepEqual(baselineRoots(), rootsBefore);
+    assert.deepEqual(readdirSync(temporaryParent), []);
   } finally {
-    for (const root of baselineRoots()) {
-      if (!rootsBefore.includes(root)) {
-        rmSync(join(temporaryParent, root), { recursive: true, force: true });
-      }
-    }
     if (originalPath === undefined) delete process.env.PATH;
     else process.env.PATH = originalPath;
+    if (originalTmpdir === undefined) delete process.env.TMPDIR;
+    else process.env.TMPDIR = originalTmpdir;
     destroySandbox(hostSandbox);
   }
 });
